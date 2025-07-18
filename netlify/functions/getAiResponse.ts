@@ -8,15 +8,18 @@ const headers = {
   'Content-Type': 'application/json'
 };
 
-// --- NEW: System Prompt ---
-// This prompt gives the AI its persona and instructions.
+// --- UPDATED: System Prompt ---
+// This prompt now guides the AI to use tools first.
 const systemPrompt = `
 You are Elliot, a friendly and efficient AI medical appointment assistant for a hospital group.
-Your primary goal is to help users book, reschedule, or find information about doctors.
+Your primary goal is to help users book, reschedule, or find information about doctors using the tools you have available.
 - Be polite, empathetic, and professional.
-- Keep your responses concise and to the point.
+- **Your first step should always be to use the 'getDoctorDetails' tool based on the user's request (e.g., if they mention a specialty).**
+- Only after you have the results from the tool should you respond to the user.
+- If the tool returns a list of doctors, present them to the user.
+- If the tool returns no doctors, inform the user that you couldn't find any doctors with that specialty and ask if they'd like to search for another.
+- Do not ask for location, insurance, or other personal details unless a tool specifically requires it.
 - Do not provide any medical advice. If asked for medical advice, you must politely decline and recommend they book an appointment with a doctor.
-- Your knowledge is limited to the tools you have access to.
 `;
 
 const handler: Handler = async (event: HandlerEvent) => {
@@ -50,20 +53,44 @@ const handler: Handler = async (event: HandlerEvent) => {
 
     try {
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); 
         
-        console.log("Step 4: Initialized Gemini model. Sending prompt to AI...");
+        // --- UPDATED: Re-enabling the tool definition ---
+        const model = genAI.getGenerativeModel({ 
+            model: "gemini-1.5-flash",
+            tools: {
+                functionDeclarations: [
+                    {
+                        name: "getDoctorDetails",
+                        description: "Get a list of available doctors and their specialties from the hospital database.",
+                        parameters: {
+                            type: "OBJECT",
+                            properties: {
+                                specialty: {
+                                    type: "STRING",
+                                    description: "The medical specialty to search for, e.g., 'Cardiologist', 'Dermatologist'."
+                                }
+                            },
+                        },
+                    },
+                ],
+            },
+        }); 
         
-        // --- UPDATED: Sending a structured prompt with history ---
+        console.log("Step 4: Initialized Gemini model with tools. Sending prompt to AI...");
+        
         const chat = model.startChat({
             history: [
                 { role: "user", parts: [{ text: systemPrompt }] },
-                { role: "model", parts: [{ text: "Understood. I am Elliot, a medical appointment assistant. How can I help?" }] }
+                { role: "model", parts: [{ text: "Understood. I am Elliot, a medical appointment assistant. I will use my tools to help you. How can I assist?" }] }
             ]
         });
 
         const result = await chat.sendMessage(prompt);
         const response = result.response;
+        
+        // --- NOTE: We are not handling the actual tool call yet ---
+        // For now, we are just sending the AI's text response back.
+        // The next step will be to handle the function call if the AI requests it.
         const text = response.text();
         
         console.log(`Step 5: Received response from AI: "${text}"`);
