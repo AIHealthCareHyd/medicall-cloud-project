@@ -1,53 +1,48 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Handler } from '@netlify/functions';
 
-// This is the main function that runs when the tool is called
 const handler: Handler = async (event) => {
-    // Exit early if the required environment variables are not set
+    console.log("--- getDoctorDetails function started ---");
+
     if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
-        console.error("Supabase environment variables are not set.");
-        return {
-            statusCode: 500,
-            body: JSON.stringify({ error: "Database configuration error." }),
-        };
+        console.error("FATAL: Supabase environment variables are not set.");
+        return { statusCode: 500, body: JSON.stringify({ error: "Database configuration error." }) };
     }
+    console.log("Step 1: Supabase environment variables found.");
 
-    // Securely connect to your Supabase project
     const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
-
-    // Get the 'specialty' from the data sent by the AI
-    const { specialty } = JSON.parse(event.body || '{}');
-
-    // Start building a query to our 'doctors' table
-    let query = supabase.from('doctors').select('name, specialty');
-
-    // If the AI provided a specialty, filter the search
-    if (specialty) {
-        query = query.ilike('specialty', `%${specialty}%`);
+    
+    let body;
+    try {
+        body = JSON.parse(event.body || '{}');
+    } catch (e) {
+        console.error("FATAL: Could not parse request body.", e);
+        return { statusCode: 400, body: JSON.stringify({ error: "Invalid request body." }) };
     }
+    console.log("Step 2: Successfully parsed request body.");
 
-    // Execute the query
-    const { data, error } = await query;
+    const { specialty } = body;
+    console.log(`Step 3: Searching for specialty: "${specialty || 'any'}"`);
 
-    // Handle any database errors
-    if (error) {
-        console.error("Database query error:", error);
+    try {
+        let query = supabase.from('doctors').select('name, specialty');
+        if (specialty) {
+            query = query.ilike('specialty', `%${specialty}%`);
+        }
+        
+        const { data, error } = await query;
+
+        if (error) {
+            throw error; // Let the catch block handle it
+        }
+
+        console.log(`Step 4: Found ${data?.length || 0} doctors.`);
+        return { statusCode: 200, body: JSON.stringify(data) };
+
+    } catch (error) {
+        console.error("FATAL: Error during Supabase query.", error);
         return { statusCode: 500, body: JSON.stringify({ error: error.message }) };
     }
-
-    // If no doctors are found, send a helpful message
-    if (!data || data.length === 0) {
-        const message = specialty
-            ? `I couldn't find any doctors with the specialty: ${specialty}.`
-            : "I couldn't find any doctors in the system.";
-        return { statusCode: 200, body: JSON.stringify({ message }) };
-    }
-
-    // If successful, send back the list of doctors found
-    return {
-        statusCode: 200,
-        body: JSON.stringify(data),
-    };
 };
 
 export { handler };

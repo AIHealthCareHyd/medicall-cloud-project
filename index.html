@@ -62,15 +62,8 @@
                 setIsLoading(true);
                 setAiResponse("Elliot is thinking..."); // Give immediate feedback
 
-                // This is your live, deployed Netlify function URL from your screenshot.
+                // This is your live, deployed Netlify function URL.
                 const functionUrl = 'https://superlative-halva-403910.netlify.app/.netlify/functions/getAiResponse'; 
-
-                // Check if the placeholder URL is still there
-                if (functionUrl === 'YOUR_NETLIFY_FUNCTION_URL_HERE') {
-                    setAiResponse("CONFIGURATION NEEDED: Please update the 'functionUrl' in the index.html file with your deployed Netlify function URL.");
-                    setIsLoading(false);
-                    return;
-                }
 
                 try {
                     const response = await fetch(functionUrl, {
@@ -80,15 +73,17 @@
                     });
 
                     if (!response.ok) {
-                        throw new Error(`Network response was not ok: ${response.statusText}`);
+                        // Throw an error with more details from the response
+                        const errorBody = await response.text();
+                        throw new Error(`Network response was not ok: ${response.statusText} (Status: ${response.status}) - Body: ${errorBody}`);
                     }
 
                     const data = await response.json();
                     setAiResponse(data.reply || "Sorry, I had trouble understanding that.");
                 } catch (error) {
                     console.error("Error fetching AI response:", error);
-                    // Display a user-friendly error
-                    setAiResponse("There was an error connecting to the AI. Please check the function URL and make sure your Netlify site is deployed.");
+                    // Display a more detailed error message to the user
+                    setAiResponse(`Error: ${error.message}. Please check the Netlify function logs for more details.`);
                 } finally {
                     setIsLoading(false);
                     resetTranscript();
