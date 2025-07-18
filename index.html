@@ -19,26 +19,29 @@
     <script type="text/babel">
 
         // We need to import hooks from the global React object
-        const { useState } = React;
+        const { useState, useEffect } = React;
 
         function App() {
             // State to hold the AI's latest response
             const [aiResponse, setAiResponse] = useState("Hi! I'm Elliot. How can I help you schedule your appointment today?");
             // State for the user's typed input
             const [userInput, setUserInput] = useState('');
-            // State to store the last message sent by the user
-            const [lastUserMessage, setLastUserMessage] = useState('...');
             // State to show if the AI is "thinking"
             const [isLoading, setIsLoading] = useState(false);
+            // --- NEW: State for conversation history ---
+            const [conversationHistory, setConversationHistory] = useState([]);
 
-            // This function sends the user's text to our backend AI
+            // This function sends the user's text and history to our backend AI
             const getAiReply = async (userText) => {
                 if (!userText) return;
                 
                 setIsLoading(true);
-                setLastUserMessage(userText); // Show the user's message immediately
-                setUserInput(''); // Clear the input box
+                setUserInput('');
                 setAiResponse("Elliot is thinking...");
+
+                // Add the new user message to the history
+                const updatedHistory = [...conversationHistory, { role: 'user', parts: [{ text: userText }] }];
+                setConversationHistory(updatedHistory);
 
                 const functionUrl = 'https://superlative-halva-403910.netlify.app/.netlify/functions/getAiResponse'; 
 
@@ -46,7 +49,8 @@
                     const response = await fetch(functionUrl, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ prompt: userText }),
+                        // --- UPDATED: Send the full history ---
+                        body: JSON.stringify({ history: updatedHistory }),
                     });
 
                     if (!response.ok) {
@@ -55,7 +59,12 @@
                     }
 
                     const data = await response.json();
-                    setAiResponse(data.reply || "Sorry, I had trouble understanding that.");
+                    const aiReplyText = data.reply || "Sorry, I had trouble understanding that.";
+                    setAiResponse(aiReplyText);
+
+                    // Add the AI's response to the history
+                    setConversationHistory([...updatedHistory, { role: 'model', parts: [{ text: aiReplyText }] }]);
+
                 } catch (error) {
                     console.error("Error fetching AI response:", error);
                     setAiResponse(`Error: ${error.message}. Please check the Netlify function logs for more details.`);
@@ -76,17 +85,15 @@
                         <h1 className="text-3xl font-bold text-center text-cyan-400 mb-2">MediCall</h1>
                         <p className="text-center text-gray-400 mb-6">Your AI Appointment Assistant</p>
                         
-                        {/* AI Response Area */}
-                        <div className="p-4 bg-gray-700 rounded-md min-h-[120px] mb-4 flex items-center justify-center">
-                            <p className="text-lg text-gray-200 text-center">
-                                {aiResponse}
-                            </p>
-                        </div>
-                        
-                        {/* User Message Area */}
-                        <div className="p-4 border-t border-gray-600 min-h-[60px]">
-                            <p className="font-semibold text-cyan-300">You:</p>
-                            <p className="text-gray-300 italic">{lastUserMessage}</p>
+                        {/* Conversation History Area */}
+                        <div className="p-4 bg-gray-700 rounded-md min-h-[200px] mb-4 overflow-y-auto">
+                            {conversationHistory.map((turn, index) => (
+                                <div key={index} className={`my-2 p-2 rounded-lg ${turn.role === 'user' ? 'bg-gray-600 text-right' : 'bg-cyan-900 text-left'}`}>
+                                    <p className="text-sm font-bold capitalize">{turn.role}</p>
+                                    <p>{turn.parts[0].text}</p>
+                                </div>
+                            ))}
+                             {isLoading && <p className="text-center italic text-gray-400">Elliot is thinking...</p>}
                         </div>
                         
                         {/* Text Input Form */}
