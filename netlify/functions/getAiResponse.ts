@@ -1,5 +1,5 @@
 // FILE: netlify/functions/getAiResponse.ts
-// This is the final, fully functional version with AI, history, and tool-calling.
+// This version adds the new 'bookAppointment' tool.
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
@@ -15,12 +15,11 @@ const systemPrompt = `
 You are Elliot, a friendly and efficient AI medical appointment assistant for a hospital group.
 Your primary goal is to help users book, reschedule, or find information about doctors using the tools you have available.
 - Be polite, empathetic, and professional.
-- Your first step should always be to use the 'getDoctorDetails' tool based on the user's request (e.g., if they mention a specialty).
-- Only after you have the results from the tool should you respond to the user.
-- If the tool returns a list of doctors, present them to the user.
-- If the tool returns no doctors, inform the user that you couldn't find any doctors with that specialty and ask if they'd like to search for another.
-- Do not ask for location, insurance, or other personal details unless a tool specifically requires it.
-- Do not provide any medical advice. If asked for medical advice, you must politely decline and recommend they book an appointment with a doctor.
+- First, use the 'getDoctorDetails' tool to find a doctor.
+- After the user confirms which doctor they want, you MUST use the 'bookAppointment' tool to schedule the appointment in the system.
+- Extract the doctor's name, date, and time from the conversation to use with the 'bookAppointment' tool.
+- After successfully booking, confirm the appointment details with the user.
+- Do not provide any medical advice.
 `;
 
 const handler: Handler = async (event: HandlerEvent) => {
@@ -65,6 +64,33 @@ const handler: Handler = async (event: HandlerEvent) => {
                             },
                         },
                     },
+                    // --- NEW: Definition for the bookAppointment tool ---
+                    {
+                        name: "bookAppointment",
+                        description: "Books a medical appointment in the hospital system.",
+                        parameters: {
+                            type: "OBJECT",
+                            properties: {
+                                doctorName: {
+                                    type: "STRING",
+                                    description: "The full name of the doctor for the appointment."
+                                },
+                                patientName: {
+                                    type: "STRING",
+                                    description: "The full name of the patient."
+                                },
+                                date: {
+                                    type: "STRING",
+                                    description: "The date of the appointment in YYYY-MM-DD format."
+                                },
+                                time: {
+                                    type: "STRING",
+                                    description: "The time of the appointment in HH:MM format (24-hour)."
+                                }
+                            },
+                            required: ["doctorName", "patientName", "date", "time"]
+                        },
+                    },
                 ],
             },
         }); 
@@ -84,6 +110,9 @@ const handler: Handler = async (event: HandlerEvent) => {
 
         if (functionCalls && functionCalls.length > 0) {
             const call = functionCalls[0];
+            let toolResult;
+
+            // --- UPDATED: Handle multiple tools ---
             if (call.name === 'getDoctorDetails') {
                 const toolUrl = `${event.headers.host}/.netlify/functions/getDoctorDetails`;
                 const toolResponse = await fetch(`https://${toolUrl}`, {
@@ -91,13 +120,23 @@ const handler: Handler = async (event: HandlerEvent) => {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(call.args),
                 });
-                const toolResult = await toolResponse.json();
-                const result2 = await chat.sendMessage([
-                    { functionResponse: { name: 'getDoctorDetails', response: toolResult } }
-                ]);
-                const finalResponse = result2.response.text();
-                return { statusCode: 200, headers, body: JSON.stringify({ reply: finalResponse }) };
+                toolResult = await toolResponse.json();
+            } else if (call.name === 'bookAppointment') {
+                // Call the new bookAppointment function
+                const toolUrl = `${event.headers.host}/.netlify/functions/bookAppointment`;
+                const toolResponse = await fetch(`https://${toolUrl}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(call.args),
+                });
+                toolResult = await toolResponse.json();
             }
+
+            const result2 = await chat.sendMessage([
+                { functionResponse: { name: call.name, response: toolResult } }
+            ]);
+            const finalResponse = result2.response.text();
+            return { statusCode: 200, headers, body: JSON.stringify({ reply: finalResponse }) };
         }
 
         const text = response.text();
