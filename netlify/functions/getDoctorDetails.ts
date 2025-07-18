@@ -1,3 +1,6 @@
+// FILE: netlify/functions/getDoctorDetails.ts
+// This version wraps the response in an object to satisfy the Gemini API.
+
 import { createClient } from '@supabase/supabase-js';
 import type { Handler } from '@netlify/functions';
 
@@ -37,7 +40,12 @@ const handler: Handler = async (event) => {
         }
 
         console.log(`Step 4: Found ${data?.length || 0} doctors.`);
-        return { statusCode: 200, body: JSON.stringify(data) };
+        
+        // --- THIS IS THE FIX ---
+        // We now return an object with a 'doctors' key, not just the array.
+        const responsePayload = { doctors: data || [] };
+        
+        return { statusCode: 200, body: JSON.stringify(responsePayload) };
 
     } catch (error) {
         console.error("FATAL: Error during Supabase query.", error);
