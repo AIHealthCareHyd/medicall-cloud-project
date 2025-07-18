@@ -2,7 +2,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler } from '@netlify/functions';
 
 // This is the main function for our AI brain
-const handler: Handler = async (event) => {
+const handler: Handler = async (event) => { // The data is in the 'event' object
     // Check for the Gemini API Key
     if (!process.env.GEMINI_API_KEY) {
         console.error("Gemini API key is not set.");
@@ -15,7 +15,6 @@ const handler: Handler = async (event) => {
     // Initialize the Gemini client with our secret key
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-    // Define the "menu" of tools we are giving to the AI
     const model = genAI.getGenerativeModel({
         model: "gemini-1.5-flash",
         tools: {
@@ -33,22 +32,18 @@ const handler: Handler = async (event) => {
                         },
                     },
                 },
-                // In the future, you would add more tools here like 'bookAppointment'
             ],
         },
     });
 
-    // Start a chat session
     const chat = model.startChat();
-    // Get the user's message from the request
+    
+    // *** THIS IS THE CORRECTED LINE ***
+    // We get the 'prompt' from the 'event.body'
     const { prompt } = JSON.parse(event.body || '{}');
 
-    // Send the user's message to Gemini
     const result = await chat.sendMessage(prompt);
     const response = result.response;
-
-    // The AI's response is now in the 'response' variable.
-    // We can simply send its text content back to the frontend for now.
     const text = response.text();
 
     return {
