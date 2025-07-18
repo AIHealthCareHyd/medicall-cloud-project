@@ -1,3 +1,6 @@
+// FILE: netlify/functions/getAiResponse.ts
+// This version correctly uses the conversation history sent from the frontend.
+
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 
@@ -38,9 +41,10 @@ const handler: Handler = async (event: HandlerEvent) => {
         return { statusCode: 400, headers, body: JSON.stringify({ error: "Invalid request body." }) };
     }
 
-    const { prompt } = body;
-    if (!prompt) {
-        return { statusCode: 400, headers, body: JSON.stringify({ error: "No prompt provided." }) };
+    // --- UPDATED: Get the history from the request body ---
+    const { history } = body;
+    if (!history || !Array.isArray(history) || history.length === 0) {
+        return { statusCode: 400, headers, body: JSON.stringify({ error: "No history provided." }) };
     }
 
     try {
@@ -66,53 +70,42 @@ const handler: Handler = async (event: HandlerEvent) => {
             },
         }); 
         
+        // --- UPDATED: Start the chat with the full conversation history ---
         const chat = model.startChat({
             history: [
                 { role: "user", parts: [{ text: systemPrompt }] },
-                { role: "model", parts: [{ text: "Understood. I am Elliot, a medical appointment assistant. I will use my tools to help you. How can I assist?" }] }
+                { role: "model", parts: [{ text: "Understood. I am Elliot, a medical appointment assistant. How can I assist?" }] },
+                // Spread the rest of the conversation history
+                ...history.slice(0, -1) // Send all but the most recent user message
             ]
         });
 
-        const result = await chat.sendMessage(prompt);
+        // Get the latest user message to send
+        const latestUserMessage = history[history.length - 1].parts[0].text;
+
+        const result = await chat.sendMessage(latestUserMessage);
         const response = result.response;
         const functionCalls = response.functionCalls();
 
         if (functionCalls && functionCalls.length > 0) {
-            console.log("AI wants to call a tool:", functionCalls[0]);
             const call = functionCalls[0];
-
             if (call.name === 'getDoctorDetails') {
-                // The AI wants to find doctors. Let's call our other function.
                 const toolUrl = `${event.headers.host}/.netlify/functions/getDoctorDetails`;
-                
                 const toolResponse = await fetch(`https://${toolUrl}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(call.args),
                 });
-
                 const toolResult = await toolResponse.json();
-
-                // Send the tool's result back to the AI
                 const result2 = await chat.sendMessage([
-                    {
-                        functionResponse: {
-                            name: 'getDoctorDetails',
-                            response: toolResult,
-                        },
-                    },
+                    { functionResponse: { name: 'getDoctorDetails', response: toolResult } }
                 ]);
-                
-                // Get the AI's final text response and send it to the user
                 const finalResponse = result2.response.text();
-                console.log("Final AI response after tool call:", finalResponse);
                 return { statusCode: 200, headers, body: JSON.stringify({ reply: finalResponse }) };
             }
         }
 
-        // If no tool call, just return the text
         const text = response.text();
-        console.log("Simple AI response (no tool call):", text);
         return { statusCode: 200, headers, body: JSON.stringify({ reply: text }) };
 
     } catch (error) {
