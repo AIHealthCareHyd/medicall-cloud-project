@@ -10,59 +10,36 @@
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- 3. Load Speech Recognition Polyfill -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/regenerator-runtime/0.13.10/runtime.min.js"></script>
 </head>
 <body class="bg-gray-900">
 
     <div id="root"></div>
 
-    <!-- 4. Your React Application Code -->
+    <!-- 3. Your React Application Code -->
     <script type="text/babel">
 
         // We need to import hooks from the global React object
-        const { useState, useEffect } = React;
-
-        // --- MOCK SPEECH RECOGNITION (for environments where it's blocked) ---
-        // In a real environment, you'd use the actual library.
-        // This mock helps us test the UI flow.
-        const useSpeechRecognition = () => {
-            return {
-                transcript: 'I need a cardiologist for tomorrow',
-                listening: false,
-                resetTranscript: () => console.log('Transcript reset.'),
-                browserSupportsSpeechRecognition: true,
-            };
-        };
-        const SpeechRecognition = {
-            startListening: () => console.log('Mock listening started.'),
-        };
-        // --- END MOCK ---
-
+        const { useState } = React;
 
         function App() {
             // State to hold the AI's latest response
             const [aiResponse, setAiResponse] = useState("Hi! I'm Elliot. How can I help you schedule your appointment today?");
-            
+            // State for the user's typed input
+            const [userInput, setUserInput] = useState('');
+            // State to store the last message sent by the user
+            const [lastUserMessage, setLastUserMessage] = useState('...');
             // State to show if the AI is "thinking"
             const [isLoading, setIsLoading] = useState(false);
-
-            // Hooks from the speech recognition library
-            const {
-                transcript,
-                listening,
-                resetTranscript,
-                browserSupportsSpeechRecognition
-            } = useSpeechRecognition();
 
             // This function sends the user's text to our backend AI
             const getAiReply = async (userText) => {
                 if (!userText) return;
                 
                 setIsLoading(true);
-                setAiResponse("Elliot is thinking..."); // Give immediate feedback
+                setLastUserMessage(userText); // Show the user's message immediately
+                setUserInput(''); // Clear the input box
+                setAiResponse("Elliot is thinking...");
 
-                // This is your live, deployed Netlify function URL.
                 const functionUrl = 'https://superlative-halva-403910.netlify.app/.netlify/functions/getAiResponse'; 
 
                 try {
@@ -73,7 +50,6 @@
                     });
 
                     if (!response.ok) {
-                        // Throw an error with more details from the response
                         const errorBody = await response.text();
                         throw new Error(`Network response was not ok: ${response.statusText} (Status: ${response.status}) - Body: ${errorBody}`);
                     }
@@ -82,26 +58,17 @@
                     setAiResponse(data.reply || "Sorry, I had trouble understanding that.");
                 } catch (error) {
                     console.error("Error fetching AI response:", error);
-                    // Display a more detailed error message to the user
                     setAiResponse(`Error: ${error.message}. Please check the Netlify function logs for more details.`);
                 } finally {
                     setIsLoading(false);
-                    resetTranscript();
                 }
             };
 
-            // This `useEffect` hook triggers the AI call when the user stops speaking
-            useEffect(() => {
-                if (!listening && transcript) {
-                    // Use a timeout to simulate the user finishing speaking
-                    const timer = setTimeout(() => getAiReply(transcript), 1000);
-                    return () => clearTimeout(timer);
-                }
-            }, [listening, transcript]);
-
-            if (!browserSupportsSpeechRecognition) {
-                return <div className="text-red-500 text-center p-4">Error: This browser doesn't support speech recognition.</div>;
-            }
+            // Handle form submission when the user clicks "Send" or presses Enter
+            const handleSubmit = (event) => {
+                event.preventDefault();
+                getAiReply(userInput);
+            };
 
             return (
                 <div className="flex flex-col items-center justify-center min-h-screen text-white font-sans p-4">
@@ -109,26 +76,37 @@
                         <h1 className="text-3xl font-bold text-center text-cyan-400 mb-2">MediCall</h1>
                         <p className="text-center text-gray-400 mb-6">Your AI Appointment Assistant</p>
                         
+                        {/* AI Response Area */}
                         <div className="p-4 bg-gray-700 rounded-md min-h-[120px] mb-4 flex items-center justify-center">
                             <p className="text-lg text-gray-200 text-center">
                                 {aiResponse}
                             </p>
                         </div>
                         
+                        {/* User Message Area */}
                         <div className="p-4 border-t border-gray-600 min-h-[60px]">
-                            <p className="font-semibold text-cyan-300">You said:</p>
-                            <p className="text-gray-300 italic">{transcript || "..."}</p>
+                            <p className="font-semibold text-cyan-300">You:</p>
+                            <p className="text-gray-300 italic">{lastUserMessage}</p>
                         </div>
                         
-                        <div className="flex justify-center mt-4">
+                        {/* Text Input Form */}
+                        <form onSubmit={handleSubmit} className="flex gap-2 mt-4">
+                            <input
+                                type="text"
+                                value={userInput}
+                                onChange={(e) => setUserInput(e.target.value)}
+                                placeholder="Type your message..."
+                                disabled={isLoading}
+                                className="flex-grow bg-gray-700 text-white rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-500 disabled:opacity-50"
+                            />
                             <button
-                                onClick={() => SpeechRecognition.startListening()}
-                                disabled={listening || isLoading}
-                                className="px-8 py-4 bg-cyan-500 text-gray-900 font-bold rounded-full shadow-lg hover:bg-cyan-400 transition-all duration-300 disabled:bg-gray-500 disabled:cursor-not-allowed"
+                                type="submit"
+                                disabled={isLoading || !userInput}
+                                className="px-6 py-2 bg-cyan-500 text-gray-900 font-bold rounded-lg shadow-lg hover:bg-cyan-400 transition-colors disabled:bg-gray-600 disabled:text-gray-400 disabled:cursor-not-allowed"
                             >
-                                {listening ? 'Listening...' : 'Talk to Elliot'}
+                                Send
                             </button>
-                        </div>
+                        </form>
                     </div>
                 </div>
             );
