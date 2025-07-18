@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MediCall AI</title>
+    <!-- 1. Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 2. Load React and Babel -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- 3. Load Speech Recognition Polyfill -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/regenerator-runtime/0.13.10/runtime.min.js"></script>
+</head>
+<body class="bg-gray-900">
+
+    <div id="root"></div>
+
+    <!-- 4. Your React Application Code -->
+    <script type="text/babel">
+
+        // We need to import hooks from the global React object
+        const { useState, useEffect } = React;
+
+        // --- MOCK SPEECH RECOGNITION (for environments where it's blocked) ---
+        // In a real environment, you'd use the actual library.
+        // This mock helps us test the UI flow.
+        const useSpeechRecognition = () => {
+            return {
+                transcript: 'I need a cardiologist for tomorrow',
+                listening: false,
+                resetTranscript: () => console.log('Transcript reset.'),
+                browserSupportsSpeechRecognition: true,
+            };
+        };
+        const SpeechRecognition = {
+            startListening: () => console.log('Mock listening started.'),
+        };
+        // --- END MOCK ---
+
+
+        function App() {
+            // State to hold the AI's latest response
+            const [aiResponse, setAiResponse] = useState("Hi! I'm Elliot. How can I help you schedule your appointment today?");
+            
+            // State to show if the AI is "thinking"
+            const [isLoading, setIsLoading] = useState(false);
+
+            // Hooks from the speech recognition library
+            const {
+                transcript,
+                listening,
+                resetTranscript,
+                browserSupportsSpeechRecognition
+            } = useSpeechRecognition();
+
+            // This function sends the user's text to our backend AI
+            const getAiReply = async (userText) => {
+                if (!userText) return;
+                
+                setIsLoading(true);
+                setAiResponse("Elliot is thinking..."); // Give immediate feedback
+
+                // IMPORTANT: Replace with your actual Netlify function URL.
+                // You get this URL AFTER you deploy your site to Netlify.
+                // It will look like: https://your-site-name.netlify.app/.netlify/functions/getAiResponse
+                const functionUrl = 'YOUR_NETLIFY_FUNCTION_URL_HERE'; 
+
+                // Check if the placeholder URL is still there
+                if (functionUrl === 'YOUR_NETLIFY_FUNCTION_URL_HERE') {
+                    setAiResponse("CONFIGURATION NEEDED: Please update the 'functionUrl' in the index.html file with your deployed Netlify function URL.");
+                    setIsLoading(false);
+                    return;
+                }
+
+                try {
+                    const response = await fetch(functionUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ prompt: userText }),
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`Network response was not ok: ${response.statusText}`);
+                    }
+
+                    const data = await response.json();
+                    setAiResponse(data.reply || "Sorry, I had trouble understanding that.");
+                } catch (error) {
+                    console.error("Error fetching AI response:", error);
+                    // Display a user-friendly error
+                    setAiResponse("There was an error connecting to the AI. Please check the function URL and make sure your Netlify site is deployed.");
+                } finally {
+                    setIsLoading(false);
+                    resetTranscript();
+                }
+            };
+
+            // This `useEffect` hook triggers the AI call when the user stops speaking
+            useEffect(() => {
+                if (!listening && transcript) {
+                    // Use a timeout to simulate the user finishing speaking
+                    const timer = setTimeout(() => getAiReply(transcript), 1000);
+                    return () => clearTimeout(timer);
+                }
+            }, [listening, transcript]);
+
+            if (!browserSupportsSpeechRecognition) {
+                return <div className="text-red-500 text-center p-4">Error: This browser doesn't support speech recognition.</div>;
+            }
+
+            return (
+                <div className="flex flex-col items-center justify-center min-h-screen text-white font-sans p-4">
+                    <div className="w-full max-w-md p-6 bg-gray-800 rounded-lg shadow-2xl">
+                        <h1 className="text-3xl font-bold text-center text-cyan-400 mb-2">MediCall</h1>
+                        <p className="text-center text-gray-400 mb-6">Your AI Appointment Assistant</p>
+                        
+                        <div className="p-4 bg-gray-700 rounded-md min-h-[120px] mb-4 flex items-center justify-center">
+                            <p className="text-lg text-gray-200 text-center">
+                                {aiResponse}
+                            </p>
+                        </div>
+                        
+                        <div className="p-4 border-t border-gray-600 min-h-[60px]">
+                            <p className="font-semibold text-cyan-300">You said:</p>
+                            <p className="text-gray-300 italic">{transcript || "..."}</p>
+                        </div>
+                        
+                        <div className="flex justify-center mt-4">
+                            <button
+                                onClick={() => SpeechRecognition.startListening()}
+                                disabled={listening || isLoading}
+                                className="px-8 py-4 bg-cyan-500 text-gray-900 font-bold rounded-full shadow-lg hover:bg-cyan-400 transition-all duration-300 disabled:bg-gray-500 disabled:cursor-not-allowed"
+                            >
+                                {listening ? 'Listening...' : 'Talk to Elliot'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Render the App to the #root div
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
+        root.render(<App />);
+
+    </script>
+
+</body>
+</html>
