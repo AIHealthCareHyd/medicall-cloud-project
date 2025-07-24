@@ -50,7 +50,7 @@
         // --- CONFIGURATION ---
         // IMPORTANT: Replace these with your actual Supabase URL and Anon Key
         const SUPABASE_URL = 'https://mmvcwsyulelcyexsldrq.supabase.co'; 
-        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1tdmN3c3Z1bGVsY3lleHNsZHJxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI4MDY2MTUsImV4cCI6MjA2ODM4MjYxNX0.UsXEVXWV_R6jlhss3t2TERRE1DUDhRvZDulf9LsS_eY'; // Found in your Supabase project's API settings
+        const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY'; // Found in your Supabase project's API settings
 
         // --- UI ELEMENTS ---
         const loadingDiv = document.getElementById('loading');
@@ -60,14 +60,15 @@
         const tbody = document.getElementById('appointments-tbody');
         
         // --- MAIN LOGIC ---
-        // Initialize the Supabase client
-        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        // *** THIS IS THE CORRECTED LINE ***
+        // Initialize the Supabase client from the global 'supabase' object
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
         async function fetchAndDisplayAppointments() {
             try {
                 // Fetch all appointments and related doctor details in one query
                 // The 'doctors(*)' part tells Supabase to join the tables for us
-                const { data: appointments, error } = await supabase
+                const { data: appointments, error } = await supabaseClient
                     .from('appointments')
                     .select(`
                         patient_name,
