@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MediCall Admin Dashboard</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Supabase Client -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="bg-gray-100">
+
+    <div id="app" class="container mx-auto p-4 md:p-8">
+        <div class="bg-white p-6 rounded-lg shadow-lg">
+            <h1 class="text-3xl font-bold text-gray-800 mb-4">Appointments Dashboard</h1>
+            <p class="text-gray-600 mb-6">A live view of all appointments booked through the MediCall AI.</p>
+            
+            <!-- Loading Spinner -->
+            <div id="loading" class="text-center p-8">
+                <p class="text-gray-500">Loading appointments...</p>
+            </div>
+
+            <!-- Error Message -->
+            <div id="error" class="hidden bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4">
+                <strong class="font-bold">Error:</strong>
+                <span id="error-message" class="block sm:inline"></span>
+            </div>
+
+            <!-- Appointments Table -->
+            <div id="table-container" class="hidden overflow-x-auto">
+                <table class="min-w-full bg-white">
+                    <thead class="bg-gray-800 text-white">
+                        <tr>
+                            <th class="w-1/4 text-left py-3 px-4 uppercase font-semibold text-sm">Patient Name</th>
+                            <th class="w-1/4 text-left py-3 px-4 uppercase font-semibold text-sm">Doctor Name</th>
+                            <th class="w-1/4 text-left py-3 px-4 uppercase font-semibold text-sm">Specialty</th>
+                            <th class="w-1/4 text-left py-3 px-4 uppercase font-semibold text-sm">Date & Time</th>
+                        </tr>
+                    </thead>
+                    <tbody id="appointments-tbody" class="text-gray-700">
+                        <!-- Rows will be inserted here by JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- CONFIGURATION ---
+        // IMPORTANT: Replace these with your actual Supabase URL and Anon Key
+        const SUPABASE_URL = 'https://mmvcwsyulelcyexsldrq.supabase.co'; 
+        const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY'; // Found in your Supabase project's API settings
+
+        // --- UI ELEMENTS ---
+        const loadingDiv = document.getElementById('loading');
+        const errorDiv = document.getElementById('error');
+        const errorMessageSpan = document.getElementById('error-message');
+        const tableContainer = document.getElementById('table-container');
+        const tbody = document.getElementById('appointments-tbody');
+        
+        // --- MAIN LOGIC ---
+        // Initialize the Supabase client
+        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        async function fetchAndDisplayAppointments() {
+            try {
+                // Fetch all appointments and related doctor details in one query
+                // The 'doctors(*)' part tells Supabase to join the tables for us
+                const { data: appointments, error } = await supabase
+                    .from('appointments')
+                    .select(`
+                        patient_name,
+                        appointment_date,
+                        appointment_time,
+                        doctors ( name, specialty )
+                    `)
+                    .order('appointment_date', { ascending: false });
+
+                if (error) {
+                    throw error; // Let the catch block handle it
+                }
+
+                // Clear any existing rows
+                tbody.innerHTML = '';
+
+                if (appointments.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" class="text-center py-4">No appointments found.</td></tr>';
+                } else {
+                    // Populate the table with the fetched data
+                    appointments.forEach(appt => {
+                        const row = document.createElement('tr');
+                        row.className = 'border-b border-gray-200 hover:bg-gray-100';
+                        
+                        const formattedDate = new Date(appt.appointment_date).toLocaleDateString();
+                        const formattedTime = appt.appointment_time.substring(0, 5);
+
+                        row.innerHTML = `
+                            <td class="py-3 px-4">${appt.patient_name}</td>
+                            <td class="py-3 px-4">${appt.doctors.name}</td>
+                            <td class="py-3 px-4">${appt.doctors.specialty}</td>
+                            <td class="py-3 px-4">${formattedDate} at ${formattedTime}</td>
+                        `;
+                        tbody.appendChild(row);
+                    });
+                }
+
+                // Show the table and hide the loader
+                loadingDiv.classList.add('hidden');
+                tableContainer.classList.remove('hidden');
+
+            } catch (err) {
+                console.error('Error fetching data:', err);
+                errorMessageSpan.textContent = err.message;
+                loadingDiv.classList.add('hidden');
+                errorDiv.classList.remove('hidden');
+            }
+        }
+
+        // Run the function when the page loads
+        document.addEventListener('DOMContentLoaded', fetchAndDisplayAppointments);
+    </script>
+
+</body>
+</html>
