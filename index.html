@@ -29,19 +29,15 @@
 
             // --- Text-to-Speech (TTS) Function ---
             const speak = (text) => {
-                // Cancel any ongoing speech before starting a new one
                 window.speechSynthesis.cancel();
-
                 return new Promise((resolve, reject) => {
                     setStatus('speaking');
                     const utterance = new SpeechSynthesisUtterance(text);
-                    
                     const voices = window.speechSynthesis.getVoices();
                     if (voices.length > 0) {
                         const femaleVoice = voices.find(voice => voice.lang.startsWith('en') && (voice.gender === 'female' || voice.name.includes('Female')));
                         if (femaleVoice) utterance.voice = femaleVoice;
                     }
-
                     utterance.onend = () => {
                         setStatus('idle');
                         resolve();
@@ -80,9 +76,9 @@
                     };
                     recognition.onresult = (event) => {
                         const transcript = event.results[0][0].transcript;
-                        const newConversation = [...conversation, { role: 'user', text: transcript }];
-                        setConversation(newConversation);
-                        getAiReply(newConversation);
+                        const updatedConversation = [...conversation, { role: 'user', text: transcript }];
+                        setConversation(updatedConversation);
+                        getAiReply(updatedConversation); // Pass the new conversation directly
                     };
                 }
                 
@@ -112,6 +108,7 @@
                     const data = await response.json();
                     const aiReplyText = data.reply || "Sorry, I had trouble understanding that.";
                     
+                    // Update conversation with the AI's final reply
                     setConversation(prev => [...prev, { role: 'model', text: aiReplyText }]);
                     await speak(aiReplyText);
 
@@ -124,7 +121,6 @@
             };
 
             // This effect now only runs once to initialize speech synthesis.
-            // The initial greeting is not spoken automatically to prevent browser blocking.
             useEffect(() => {
                 const warmUpSpeechSynthesis = () => {
                     if (window.speechSynthesis.getVoices().length > 0) {
@@ -132,10 +128,10 @@
                     }
                 };
                 window.speechSynthesis.onvoiceschanged = warmUpSpeechSynthesis;
-                warmUpSpeechSynthesis(); // Call it once in case voices are already loaded
+                warmUpSpeechSynthesis();
 
                 return () => {
-                    window.speechSynthesis.onvoiceschanged = null; // Cleanup
+                    window.speechSynthesis.onvoiceschanged = null;
                 };
             }, []);
 
@@ -151,7 +147,6 @@
             return (
                 <div className="flex flex-col items-center justify-center min-h-screen text-gray-800 font-sans p-4 bg-gray-50">
                     <div className="w-full max-w-md p-6 bg-white rounded-lg shadow-xl">
-                        {/* Styled Text Logo */}
                         <div className="text-center mb-4">
                             <h1 className="text-3xl font-bold text-blue-900">PRUDENCE</h1>
                             <p className="text-sm tracking-widest text-blue-800">HOSPITALS</p>
