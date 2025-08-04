@@ -1,5 +1,5 @@
 // FILE: netlify/functions/getAiResponse.ts
-// This version adds the new 'rescheduleAppointment' tool.
+// This is the final, fully functional version with all tools and branding.
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
@@ -61,7 +61,6 @@ const handler: Handler = async (event: HandlerEvent) => {
                         description: "Cancels an existing medical appointment.",
                         parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, date: { type: "STRING" } }, required: ["doctorName", "patientName", "date"] },
                     },
-                    // --- NEW: Definition for the rescheduleAppointment tool ---
                     {
                         name: "rescheduleAppointment",
                         description: "Reschedules an existing medical appointment to a new date and time.",
@@ -99,7 +98,6 @@ const handler: Handler = async (event: HandlerEvent) => {
             let toolResult;
             let toolUrl;
 
-            // --- UPDATED: Handle multiple tools ---
             if (call.name === 'getDoctorDetails') {
                 toolUrl = `${event.headers.host}/.netlify/functions/getDoctorDetails`;
             } else if (call.name === 'bookAppointment') {
