@@ -36,7 +36,6 @@
                     setStatus('speaking');
                     const utterance = new SpeechSynthesisUtterance(text);
                     
-                    // This ensures that if voices are not loaded, we wait for them.
                     const voices = window.speechSynthesis.getVoices();
                     if (voices.length > 0) {
                         const femaleVoice = voices.find(voice => voice.lang.startsWith('en') && (voice.gender === 'female' || voice.name.includes('Female')));
@@ -58,7 +57,7 @@
 
             // --- Speech-to-Text (STT) Function ---
             const listen = () => {
-                if (status !== 'idle') return; // Prevent starting if not idle
+                if (status !== 'idle') return;
 
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 if (!SpeechRecognition) {
@@ -73,7 +72,6 @@
 
                     recognition.onstart = () => setStatus('listening');
                     recognition.onend = () => {
-                        // Check status before setting to idle, as onresult might have changed it
                         if (status === 'listening') setStatus('idle');
                     };
                     recognition.onerror = (event) => {
@@ -84,7 +82,7 @@
                         const transcript = event.results[0][0].transcript;
                         const newConversation = [...conversation, { role: 'user', text: transcript }];
                         setConversation(newConversation);
-                        getAiReply(newConversation); // Pass the updated conversation directly
+                        getAiReply(newConversation);
                     };
                 }
                 
@@ -121,17 +119,20 @@
                     console.error("Error fetching AI response:", error);
                     const errorText = `There was an error: ${error.message}`;
                     setConversation(prev => [...prev, { role: 'model', text: errorText }]);
-                    await speak(errorText);
+                    await speak(errorText).catch(e => console.error("Error speaking the error message:", e));
                 }
             };
 
-            // Speak the initial greeting when the component loads
+            // This effect now only runs once to initialize speech synthesis.
+            // The initial greeting is not spoken automatically to prevent browser blocking.
             useEffect(() => {
-                // The 'voiceschanged' event ensures voices are loaded before we try to speak.
-                const handleVoicesChanged = () => speak(conversation[0].text);
-                window.speechSynthesis.onvoiceschanged = handleVoicesChanged;
-                // Call it once in case voices are already loaded
-                handleVoicesChanged();
+                const warmUpSpeechSynthesis = () => {
+                    if (window.speechSynthesis.getVoices().length > 0) {
+                        console.log("Speech synthesis voices loaded.");
+                    }
+                };
+                window.speechSynthesis.onvoiceschanged = warmUpSpeechSynthesis;
+                warmUpSpeechSynthesis(); // Call it once in case voices are already loaded
 
                 return () => {
                     window.speechSynthesis.onvoiceschanged = null; // Cleanup
@@ -150,8 +151,13 @@
             return (
                 <div className="flex flex-col items-center justify-center min-h-screen text-gray-800 font-sans p-4 bg-gray-50">
                     <div className="w-full max-w-md p-6 bg-white rounded-lg shadow-xl">
-                        <img src="https://www.prudencehospitals.com/images/Prudence-Logo.png" alt="Prudence Hospitals Logo" className="w-48 mx-auto mb-4"/>
-                        <h1 className="text-2xl font-bold text-center text-blue-900 mb-2">Health Assistant</h1>
+                        {/* Styled Text Logo */}
+                        <div className="text-center mb-4">
+                            <h1 className="text-3xl font-bold text-blue-900">PRUDENCE</h1>
+                            <p className="text-sm tracking-widest text-blue-800">HOSPITALS</p>
+                        </div>
+                        
+                        <h2 className="text-xl font-semibold text-center text-gray-700 mb-2">Health Assistant</h2>
                         <p className="text-center text-gray-500 mb-6">Your AI Voice Assistant</p>
                         
                         <div className="p-4 bg-gray-100 rounded-md min-h-[250px] mb-4 overflow-y-auto flex flex-col gap-2">
