@@ -1,6 +1,3 @@
-// FILE: netlify/functions/getAiResponse.ts
-// This version adds the new 'cancelAppointment' tool.
-
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 
@@ -12,9 +9,10 @@ const headers = {
 };
 
 const systemPrompt = `
-You are Sahay, a friendly and efficient AI medical appointment assistant.
-Your goal is to help users book, cancel, or find information about doctors using your tools.
-- First, use 'getDoctorDetails' to find a doctor.
+You are Sahay, a friendly and efficient AI medical appointment assistant for Prudence Hospitals.
+Your goal is to help users book, cancel, or find information about doctors at Prudence Hospitals using your tools.
+- Be polite, empathetic, and professional.
+- First, use 'getDoctorDetails' to find a doctor based on their specialty.
 - After user confirmation, use 'bookAppointment' to schedule.
 - If a user wants to cancel, you MUST use the 'cancelAppointment' tool.
 - Extract the doctor's name, patient's name, and date from the conversation to use with your tools.
@@ -54,7 +52,7 @@ const handler: Handler = async (event: HandlerEvent) => {
                             properties: {
                                 specialty: {
                                     type: "STRING",
-                                    description: "The medical specialty to search for, e.g., 'Cardiologist', 'Dermatologist'."
+                                    description: "The medical specialty to search for, e.g., 'Surgical Oncology', 'Urology'."
                                 }
                             },
                         },
@@ -73,7 +71,6 @@ const handler: Handler = async (event: HandlerEvent) => {
                             required: ["doctorName", "patientName", "date", "time"]
                         },
                     },
-                    // --- NEW: Definition for the cancelAppointment tool ---
                     {
                         name: "cancelAppointment",
                         description: "Cancels an existing medical appointment in the hospital system.",
@@ -94,7 +91,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         const chat = model.startChat({
             history: [
                 { role: "user", parts: [{ text: systemPrompt }] },
-                { role: "model", parts: [{ text: "Understood. I am Sahay, a medical appointment assistant. How can I assist?" }] },
+                { role: "model", parts: [{ text: "Understood. I am Sahay, an AI assistant for Prudence Hospitals. How can I assist?" }] },
                 ...history.slice(0, -1)
             ]
         });
@@ -109,7 +106,6 @@ const handler: Handler = async (event: HandlerEvent) => {
             let toolResult;
             let toolUrl;
 
-            // --- UPDATED: Handle multiple tools ---
             if (call.name === 'getDoctorDetails') {
                 toolUrl = `${event.headers.host}/.netlify/functions/getDoctorDetails`;
             } else if (call.name === 'bookAppointment') {
