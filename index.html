@@ -29,12 +29,28 @@
 
             // --- Text-to-Speech (TTS) Function ---
             const speak = (text) => {
-                return new Promise((resolve) => {
+                // Cancel any ongoing speech before starting a new one
+                window.speechSynthesis.cancel();
+
+                return new Promise((resolve, reject) => {
                     setStatus('speaking');
                     const utterance = new SpeechSynthesisUtterance(text);
+                    
+                    // This ensures that if voices are not loaded, we wait for them.
+                    const voices = window.speechSynthesis.getVoices();
+                    if (voices.length > 0) {
+                        const femaleVoice = voices.find(voice => voice.lang.startsWith('en') && (voice.gender === 'female' || voice.name.includes('Female')));
+                        if (femaleVoice) utterance.voice = femaleVoice;
+                    }
+
                     utterance.onend = () => {
                         setStatus('idle');
                         resolve();
+                    };
+                    utterance.onerror = (event) => {
+                        console.error("SpeechSynthesis Error", event);
+                        setStatus('idle');
+                        reject(event.error);
                     };
                     window.speechSynthesis.speak(utterance);
                 });
@@ -42,10 +58,7 @@
 
             // --- Speech-to-Text (STT) Function ---
             const listen = () => {
-                if (recognitionRef.current) {
-                    recognitionRef.current.start();
-                    return;
-                }
+                if (status !== 'idle') return; // Prevent starting if not idle
 
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 if (!SpeechRecognition) {
@@ -53,33 +66,29 @@
                     return;
                 }
 
-                const recognition = new SpeechRecognition();
-                recognitionRef.current = recognition;
-                recognition.interimResults = false;
+                if (!recognitionRef.current) {
+                    const recognition = new SpeechRecognition();
+                    recognition.interimResults = false;
+                    recognitionRef.current = recognition;
 
-                recognition.onstart = () => {
-                    setStatus('listening');
-                };
-
-                recognition.onresult = (event) => {
-                    const transcript = event.results[0][0].transcript;
-                    const newConversation = [...conversation, { role: 'user', text: transcript }];
-                    setConversation(newConversation);
-                    getAiReply(newConversation);
-                };
-
-                recognition.onerror = (event) => {
-                    console.error("Speech recognition error:", event.error);
-                    setStatus('idle');
-                };
+                    recognition.onstart = () => setStatus('listening');
+                    recognition.onend = () => {
+                        // Check status before setting to idle, as onresult might have changed it
+                        if (status === 'listening') setStatus('idle');
+                    };
+                    recognition.onerror = (event) => {
+                        console.error("Speech recognition error:", event.error);
+                        if (status === 'listening') setStatus('idle');
+                    };
+                    recognition.onresult = (event) => {
+                        const transcript = event.results[0][0].transcript;
+                        const newConversation = [...conversation, { role: 'user', text: transcript }];
+                        setConversation(newConversation);
+                        getAiReply(newConversation); // Pass the updated conversation directly
+                    };
+                }
                 
-                recognition.onend = () => {
-                    if (status === 'listening') {
-                        setStatus('idle');
-                    }
-                };
-
-                recognition.start();
+                recognitionRef.current.start();
             };
 
             // --- Get AI Reply Function ---
@@ -118,14 +127,15 @@
 
             // Speak the initial greeting when the component loads
             useEffect(() => {
-                // Find a female voice if available for Sahay
-                const voices = window.speechSynthesis.getVoices();
-                const utterance = new SpeechSynthesisUtterance(conversation[0].text);
-                const femaleVoice = voices.find(voice => voice.gender === 'female' || voice.name.includes('Female'));
-                if (femaleVoice) {
-                    utterance.voice = femaleVoice;
-                }
-                speak(utterance.text);
+                // The 'voiceschanged' event ensures voices are loaded before we try to speak.
+                const handleVoicesChanged = () => speak(conversation[0].text);
+                window.speechSynthesis.onvoiceschanged = handleVoicesChanged;
+                // Call it once in case voices are already loaded
+                handleVoicesChanged();
+
+                return () => {
+                    window.speechSynthesis.onvoiceschanged = null; // Cleanup
+                };
             }, []);
 
             const getButtonText = () => {
@@ -140,13 +150,10 @@
             return (
                 <div className="flex flex-col items-center justify-center min-h-screen text-gray-800 font-sans p-4 bg-gray-50">
                     <div className="w-full max-w-md p-6 bg-white rounded-lg shadow-xl">
-                        {/* Prudence Logo */}
                         <img src="https://www.prudencehospitals.com/images/Prudence-Logo.png" alt="Prudence Hospitals Logo" className="w-48 mx-auto mb-4"/>
-                        
                         <h1 className="text-2xl font-bold text-center text-blue-900 mb-2">Health Assistant</h1>
                         <p className="text-center text-gray-500 mb-6">Your AI Voice Assistant</p>
                         
-                        {/* Conversation History Area */}
                         <div className="p-4 bg-gray-100 rounded-md min-h-[250px] mb-4 overflow-y-auto flex flex-col gap-2">
                             {conversation.map((turn, index) => (
                                 <div key={index} className={`p-3 rounded-lg max-w-[85%] ${turn.role === 'user' ? 'bg-gray-200 self-end' : 'bg-blue-100 self-start'}`}>
@@ -155,7 +162,6 @@
                             ))}
                         </div>
                         
-                        {/* Control Button */}
                         <div className="flex justify-center mt-4">
                             <button
                                 onClick={listen}
