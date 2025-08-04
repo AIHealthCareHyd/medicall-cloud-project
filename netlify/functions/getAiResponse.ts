@@ -1,21 +1,23 @@
+// FILE: netlify/functions/getAiResponse.ts
+// This version adds the new 'rescheduleAppointment' tool.
+
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 
-// Define common headers, including the CORS fix
 const headers = {
-  'Access-Control-Allow-Origin': '*', // Allows any origin to access this function
+  'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'Content-Type',
   'Content-Type': 'application/json'
 };
 
 const systemPrompt = `
-You are Sahay, a friendly and efficient AI medical appointment assistant for Prudence Hospitals.
-Your goal is to help users book, cancel, or find information about doctors at Prudence Hospitals using your tools.
-- Be polite, empathetic, and professional.
-- First, use 'getDoctorDetails' to find a doctor based on their specialty.
-- After user confirmation, use 'bookAppointment' to schedule.
-- If a user wants to cancel, you MUST use the 'cancelAppointment' tool.
-- Extract the doctor's name, patient's name, and date from the conversation to use with your tools.
+You are Sahay, an AI medical appointment assistant for Prudence Hospitals.
+Your goal is to help users book, cancel, or reschedule appointments using your tools.
+- Use 'getDoctorDetails' to find a doctor.
+- Use 'bookAppointment' to schedule a new appointment.
+- Use 'cancelAppointment' to cancel an existing appointment.
+- If a user wants to change an appointment, you MUST use the 'rescheduleAppointment' tool.
+- Extract all necessary details (patient name, doctor name, old date, new date, new time) from the conversation to use with your tools.
 - After a successful action, confirm the details with the user.
 - Do not provide medical advice.
 `;
@@ -46,42 +48,33 @@ const handler: Handler = async (event: HandlerEvent) => {
                 functionDeclarations: [
                     {
                         name: "getDoctorDetails",
-                        description: "Get a list of available doctors and their specialties from the hospital database.",
-                        parameters: {
-                            type: "OBJECT",
-                            properties: {
-                                specialty: {
-                                    type: "STRING",
-                                    description: "The medical specialty to search for, e.g., 'Surgical Oncology', 'Urology'."
-                                }
-                            },
-                        },
+                        description: "Get a list of available doctors and their specialties.",
+                        parameters: { type: "OBJECT", properties: { specialty: { type: "STRING" } } },
                     },
                     {
                         name: "bookAppointment",
-                        description: "Books a medical appointment in the hospital system.",
-                        parameters: {
-                            type: "OBJECT",
-                            properties: {
-                                doctorName: { type: "STRING", description: "The full name of the doctor for the appointment." },
-                                patientName: { type: "STRING", description: "The full name of the patient." },
-                                date: { type: "STRING", description: "The date of the appointment in YYYY-MM-DD format." },
-                                time: { type: "STRING", description: "The time of the appointment in HH:MM format (24-hour)." }
-                            },
-                            required: ["doctorName", "patientName", "date", "time"]
-                        },
+                        description: "Books a medical appointment.",
+                        parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, date: { type: "STRING" }, time: { type: "STRING" } }, required: ["doctorName", "patientName", "date", "time"] },
                     },
                     {
                         name: "cancelAppointment",
-                        description: "Cancels an existing medical appointment in the hospital system.",
+                        description: "Cancels an existing medical appointment.",
+                        parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, date: { type: "STRING" } }, required: ["doctorName", "patientName", "date"] },
+                    },
+                    // --- NEW: Definition for the rescheduleAppointment tool ---
+                    {
+                        name: "rescheduleAppointment",
+                        description: "Reschedules an existing medical appointment to a new date and time.",
                         parameters: {
                             type: "OBJECT",
                             properties: {
-                                doctorName: { type: "STRING", description: "The full name of the doctor for the appointment being cancelled." },
-                                patientName: { type: "STRING", description: "The full name of the patient whose appointment is being cancelled." },
-                                date: { type: "STRING", description: "The date of the appointment to cancel in YYYY-MM-DD format." }
+                                doctorName: { type: "STRING", description: "The full name of the doctor for the appointment being rescheduled." },
+                                patientName: { type: "STRING", description: "The full name of the patient whose appointment is being rescheduled." },
+                                oldDate: { type: "STRING", description: "The original date of the appointment in YYYY-MM-DD format." },
+                                newDate: { type: "STRING", description: "The new date for the appointment in YYYY-MM-DD format." },
+                                newTime: { type: "STRING", description: "The new time for the appointment in HH:MM format (24-hour)." }
                             },
-                            required: ["doctorName", "patientName", "date"]
+                            required: ["doctorName", "patientName", "oldDate", "newDate", "newTime"]
                         },
                     },
                 ],
@@ -106,12 +99,15 @@ const handler: Handler = async (event: HandlerEvent) => {
             let toolResult;
             let toolUrl;
 
+            // --- UPDATED: Handle multiple tools ---
             if (call.name === 'getDoctorDetails') {
                 toolUrl = `${event.headers.host}/.netlify/functions/getDoctorDetails`;
             } else if (call.name === 'bookAppointment') {
                 toolUrl = `${event.headers.host}/.netlify/functions/bookAppointment`;
             } else if (call.name === 'cancelAppointment') {
                 toolUrl = `${event.headers.host}/.netlify/functions/cancelAppointment`;
+            } else if (call.name === 'rescheduleAppointment') {
+                toolUrl = `${event.headers.host}/.netlify/functions/rescheduleAppointment`;
             }
 
             if (toolUrl) {

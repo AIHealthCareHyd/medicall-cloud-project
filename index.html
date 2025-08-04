@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MediCall AI</title>
+    <title>Prudence Health Assistant</title>
     <!-- 1. Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- 2. Load React and Babel -->
@@ -11,37 +11,85 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
-<body class="bg-gray-900">
+<body class="bg-gray-100">
 
     <div id="root"></div>
 
     <!-- 3. Your React Application Code -->
     <script type="text/babel">
 
-        // We need to import hooks from the global React object
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useRef } = React;
 
         function App() {
-            // State to hold the AI's latest response
-            const [aiResponse, setAiResponse] = useState("Hi! I'm Elliot. How can I help you schedule your appointment today?");
-            // State for the user's typed input
-            const [userInput, setUserInput] = useState('');
-            // State to show if the AI is "thinking"
-            const [isLoading, setIsLoading] = useState(false);
-            // --- NEW: State for conversation history ---
-            const [conversationHistory, setConversationHistory] = useState([]);
+            const [conversation, setConversation] = useState([
+                { role: 'model', text: "Welcome to Prudence Hospitals. I'm Sahay, your AI assistant. How can I help you today?" }
+            ]);
+            const [status, setStatus] = useState('idle'); // idle, listening, thinking, speaking
+            const recognitionRef = useRef(null);
 
-            // This function sends the user's text and history to our backend AI
-            const getAiReply = async (userText) => {
-                if (!userText) return;
+            // --- Text-to-Speech (TTS) Function ---
+            const speak = (text) => {
+                return new Promise((resolve) => {
+                    setStatus('speaking');
+                    const utterance = new SpeechSynthesisUtterance(text);
+                    utterance.onend = () => {
+                        setStatus('idle');
+                        resolve();
+                    };
+                    window.speechSynthesis.speak(utterance);
+                });
+            };
+
+            // --- Speech-to-Text (STT) Function ---
+            const listen = () => {
+                if (recognitionRef.current) {
+                    recognitionRef.current.start();
+                    return;
+                }
+
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                if (!SpeechRecognition) {
+                    alert("Sorry, your browser doesn't support speech recognition.");
+                    return;
+                }
+
+                const recognition = new SpeechRecognition();
+                recognitionRef.current = recognition;
+                recognition.interimResults = false;
+
+                recognition.onstart = () => {
+                    setStatus('listening');
+                };
+
+                recognition.onresult = (event) => {
+                    const transcript = event.results[0][0].transcript;
+                    const newConversation = [...conversation, { role: 'user', text: transcript }];
+                    setConversation(newConversation);
+                    getAiReply(newConversation);
+                };
+
+                recognition.onerror = (event) => {
+                    console.error("Speech recognition error:", event.error);
+                    setStatus('idle');
+                };
                 
-                setIsLoading(true);
-                setUserInput('');
-                setAiResponse("Elliot is thinking...");
+                recognition.onend = () => {
+                    if (status === 'listening') {
+                        setStatus('idle');
+                    }
+                };
 
-                // Add the new user message to the history
-                const updatedHistory = [...conversationHistory, { role: 'user', parts: [{ text: userText }] }];
-                setConversationHistory(updatedHistory);
+                recognition.start();
+            };
+
+            // --- Get AI Reply Function ---
+            const getAiReply = async (currentConversation) => {
+                setStatus('thinking');
+                
+                const historyForApi = currentConversation.map(turn => ({
+                    role: turn.role,
+                    parts: [{ text: turn.text }]
+                }));
 
                 const functionUrl = 'https://superlative-halva-403910.netlify.app/.netlify/functions/getAiResponse'; 
 
@@ -49,77 +97,79 @@
                     const response = await fetch(functionUrl, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        // --- UPDATED: Send the full history ---
-                        body: JSON.stringify({ history: updatedHistory }),
+                        body: JSON.stringify({ history: historyForApi }),
                     });
 
-                    if (!response.ok) {
-                        const errorBody = await response.text();
-                        throw new Error(`Network response was not ok: ${response.statusText} (Status: ${response.status}) - Body: ${errorBody}`);
-                    }
+                    if (!response.ok) throw new Error("Network response was not ok.");
 
                     const data = await response.json();
                     const aiReplyText = data.reply || "Sorry, I had trouble understanding that.";
-                    setAiResponse(aiReplyText);
-
-                    // Add the AI's response to the history
-                    setConversationHistory([...updatedHistory, { role: 'model', parts: [{ text: aiReplyText }] }]);
+                    
+                    setConversation(prev => [...prev, { role: 'model', text: aiReplyText }]);
+                    await speak(aiReplyText);
 
                 } catch (error) {
                     console.error("Error fetching AI response:", error);
-                    setAiResponse(`Error: ${error.message}. Please check the Netlify function logs for more details.`);
-                } finally {
-                    setIsLoading(false);
+                    const errorText = `There was an error: ${error.message}`;
+                    setConversation(prev => [...prev, { role: 'model', text: errorText }]);
+                    await speak(errorText);
                 }
             };
 
-            // Handle form submission when the user clicks "Send" or presses Enter
-            const handleSubmit = (event) => {
-                event.preventDefault();
-                getAiReply(userInput);
+            // Speak the initial greeting when the component loads
+            useEffect(() => {
+                // Find a female voice if available for Sahay
+                const voices = window.speechSynthesis.getVoices();
+                const utterance = new SpeechSynthesisUtterance(conversation[0].text);
+                const femaleVoice = voices.find(voice => voice.gender === 'female' || voice.name.includes('Female'));
+                if (femaleVoice) {
+                    utterance.voice = femaleVoice;
+                }
+                speak(utterance.text);
+            }, []);
+
+            const getButtonText = () => {
+                switch (status) {
+                    case 'listening': return 'Listening...';
+                    case 'thinking': return 'Thinking...';
+                    case 'speaking': return 'Speaking...';
+                    default: return 'Talk to Sahay';
+                }
             };
 
             return (
-                <div className="flex flex-col items-center justify-center min-h-screen text-white font-sans p-4">
-                    <div className="w-full max-w-md p-6 bg-gray-800 rounded-lg shadow-2xl">
-                        <h1 className="text-3xl font-bold text-center text-cyan-400 mb-2">MediCall</h1>
-                        <p className="text-center text-gray-400 mb-6">Your AI Appointment Assistant</p>
+                <div className="flex flex-col items-center justify-center min-h-screen text-gray-800 font-sans p-4 bg-gray-50">
+                    <div className="w-full max-w-md p-6 bg-white rounded-lg shadow-xl">
+                        {/* Prudence Logo */}
+                        <img src="https://www.prudencehospitals.com/images/Prudence-Logo.png" alt="Prudence Hospitals Logo" className="w-48 mx-auto mb-4"/>
+                        
+                        <h1 className="text-2xl font-bold text-center text-blue-900 mb-2">Health Assistant</h1>
+                        <p className="text-center text-gray-500 mb-6">Your AI Voice Assistant</p>
                         
                         {/* Conversation History Area */}
-                        <div className="p-4 bg-gray-700 rounded-md min-h-[200px] mb-4 overflow-y-auto">
-                            {conversationHistory.map((turn, index) => (
-                                <div key={index} className={`my-2 p-2 rounded-lg ${turn.role === 'user' ? 'bg-gray-600 text-right' : 'bg-cyan-900 text-left'}`}>
-                                    <p className="text-sm font-bold capitalize">{turn.role}</p>
-                                    <p>{turn.parts[0].text}</p>
+                        <div className="p-4 bg-gray-100 rounded-md min-h-[250px] mb-4 overflow-y-auto flex flex-col gap-2">
+                            {conversation.map((turn, index) => (
+                                <div key={index} className={`p-3 rounded-lg max-w-[85%] ${turn.role === 'user' ? 'bg-gray-200 self-end' : 'bg-blue-100 self-start'}`}>
+                                    <p>{turn.text}</p>
                                 </div>
                             ))}
-                             {isLoading && <p className="text-center italic text-gray-400">Elliot is thinking...</p>}
                         </div>
                         
-                        {/* Text Input Form */}
-                        <form onSubmit={handleSubmit} className="flex gap-2 mt-4">
-                            <input
-                                type="text"
-                                value={userInput}
-                                onChange={(e) => setUserInput(e.target.value)}
-                                placeholder="Type your message..."
-                                disabled={isLoading}
-                                className="flex-grow bg-gray-700 text-white rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-500 disabled:opacity-50"
-                            />
+                        {/* Control Button */}
+                        <div className="flex justify-center mt-4">
                             <button
-                                type="submit"
-                                disabled={isLoading || !userInput}
-                                className="px-6 py-2 bg-cyan-500 text-gray-900 font-bold rounded-lg shadow-lg hover:bg-cyan-400 transition-colors disabled:bg-gray-600 disabled:text-gray-400 disabled:cursor-not-allowed"
+                                onClick={listen}
+                                disabled={status !== 'idle'}
+                                className="px-8 py-4 bg-orange-500 text-white font-bold rounded-full shadow-lg hover:bg-orange-600 transition-all duration-300 disabled:bg-gray-400 disabled:cursor-not-allowed"
                             >
-                                Send
+                                {getButtonText()}
                             </button>
-                        </form>
+                        </div>
                     </div>
                 </div>
             );
         }
 
-        // Render the App to the #root div
         const container = document.getElementById('root');
         const root = ReactDOM.createRoot(container);
         root.render(<App />);
