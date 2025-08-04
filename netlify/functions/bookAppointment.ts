@@ -1,5 +1,5 @@
 // FILE: netlify/functions/bookAppointment.ts
-// This function adds a new appointment to the Supabase database.
+// This version uses a more flexible search to find the doctor.
 
 import { createClient } from '@supabase/supabase-js';
 import type { Handler, HandlerEvent } from '@netlify/functions';
@@ -38,11 +38,12 @@ const handler: Handler = async (event: HandlerEvent) => {
     try {
         const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
-        // First, find the ID of the doctor based on their name
+        // --- THIS IS THE FIX ---
+        // Find the doctor's ID using a case-insensitive "like" search to be more flexible.
         const { data: doctorData, error: doctorError } = await supabase
             .from('doctors')
             .select('id')
-            .eq('name', doctorName)
+            .ilike('name', `%${doctorName}%`) // Using ilike for a fuzzy search
             .single();
 
         if (doctorError || !doctorData) {
