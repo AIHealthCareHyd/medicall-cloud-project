@@ -1,5 +1,5 @@
 // FILE: netlify/functions/getAiResponse.ts
-// This version adds the new 'bookAppointment' tool.
+// This version adds the new 'cancelAppointment' tool.
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
@@ -12,34 +12,29 @@ const headers = {
 };
 
 const systemPrompt = `
-You are Elliot, a friendly and efficient AI medical appointment assistant for a hospital group.
-Your primary goal is to help users book, reschedule, or find information about doctors using the tools you have available.
-- Be polite, empathetic, and professional.
-- First, use the 'getDoctorDetails' tool to find a doctor.
-- After the user confirms which doctor they want, you MUST use the 'bookAppointment' tool to schedule the appointment in the system.
-- Extract the doctor's name, date, and time from the conversation to use with the 'bookAppointment' tool.
-- After successfully booking, confirm the appointment details with the user.
-- Do not provide any medical advice.
+You are Sahay, a friendly and efficient AI medical appointment assistant.
+Your goal is to help users book, cancel, or find information about doctors using your tools.
+- First, use 'getDoctorDetails' to find a doctor.
+- After user confirmation, use 'bookAppointment' to schedule.
+- If a user wants to cancel, you MUST use the 'cancelAppointment' tool.
+- Extract the doctor's name, patient's name, and date from the conversation to use with your tools.
+- After a successful action, confirm the details with the user.
+- Do not provide medical advice.
 `;
 
 const handler: Handler = async (event: HandlerEvent) => {
-    console.log("--- Full AI function started ---");
-
     if (event.httpMethod === 'OPTIONS') {
         return { statusCode: 200, headers, body: JSON.stringify({ message: 'CORS preflight successful' }) };
     }
-
     if (!process.env.GEMINI_API_KEY) {
         return { statusCode: 500, headers, body: JSON.stringify({ error: "AI configuration error." }) };
     }
-
     let body;
     try {
         body = JSON.parse(event.body || '{}');
     } catch (e) {
         return { statusCode: 400, headers, body: JSON.stringify({ error: "Invalid request body." }) };
     }
-
     const { history } = body;
     if (!history || !Array.isArray(history) || history.length === 0) {
         return { statusCode: 400, headers, body: JSON.stringify({ error: "No history provided." }) };
@@ -64,31 +59,32 @@ const handler: Handler = async (event: HandlerEvent) => {
                             },
                         },
                     },
-                    // --- NEW: Definition for the bookAppointment tool ---
                     {
                         name: "bookAppointment",
                         description: "Books a medical appointment in the hospital system.",
                         parameters: {
                             type: "OBJECT",
                             properties: {
-                                doctorName: {
-                                    type: "STRING",
-                                    description: "The full name of the doctor for the appointment."
-                                },
-                                patientName: {
-                                    type: "STRING",
-                                    description: "The full name of the patient."
-                                },
-                                date: {
-                                    type: "STRING",
-                                    description: "The date of the appointment in YYYY-MM-DD format."
-                                },
-                                time: {
-                                    type: "STRING",
-                                    description: "The time of the appointment in HH:MM format (24-hour)."
-                                }
+                                doctorName: { type: "STRING", description: "The full name of the doctor for the appointment." },
+                                patientName: { type: "STRING", description: "The full name of the patient." },
+                                date: { type: "STRING", description: "The date of the appointment in YYYY-MM-DD format." },
+                                time: { type: "STRING", description: "The time of the appointment in HH:MM format (24-hour)." }
                             },
                             required: ["doctorName", "patientName", "date", "time"]
+                        },
+                    },
+                    // --- NEW: Definition for the cancelAppointment tool ---
+                    {
+                        name: "cancelAppointment",
+                        description: "Cancels an existing medical appointment in the hospital system.",
+                        parameters: {
+                            type: "OBJECT",
+                            properties: {
+                                doctorName: { type: "STRING", description: "The full name of the doctor for the appointment being cancelled." },
+                                patientName: { type: "STRING", description: "The full name of the patient whose appointment is being cancelled." },
+                                date: { type: "STRING", description: "The date of the appointment to cancel in YYYY-MM-DD format." }
+                            },
+                            required: ["doctorName", "patientName", "date"]
                         },
                     },
                 ],
@@ -98,7 +94,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         const chat = model.startChat({
             history: [
                 { role: "user", parts: [{ text: systemPrompt }] },
-                { role: "model", parts: [{ text: "Understood. I am Elliot, a medical appointment assistant. I will use my tools to help you. How can I assist?" }] },
+                { role: "model", parts: [{ text: "Understood. I am Sahay, a medical appointment assistant. How can I assist?" }] },
                 ...history.slice(0, -1)
             ]
         });
@@ -111,19 +107,18 @@ const handler: Handler = async (event: HandlerEvent) => {
         if (functionCalls && functionCalls.length > 0) {
             const call = functionCalls[0];
             let toolResult;
+            let toolUrl;
 
             // --- UPDATED: Handle multiple tools ---
             if (call.name === 'getDoctorDetails') {
-                const toolUrl = `${event.headers.host}/.netlify/functions/getDoctorDetails`;
-                const toolResponse = await fetch(`https://${toolUrl}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(call.args),
-                });
-                toolResult = await toolResponse.json();
+                toolUrl = `${event.headers.host}/.netlify/functions/getDoctorDetails`;
             } else if (call.name === 'bookAppointment') {
-                // Call the new bookAppointment function
-                const toolUrl = `${event.headers.host}/.netlify/functions/bookAppointment`;
+                toolUrl = `${event.headers.host}/.netlify/functions/bookAppointment`;
+            } else if (call.name === 'cancelAppointment') {
+                toolUrl = `${event.headers.host}/.netlify/functions/cancelAppointment`;
+            }
+
+            if (toolUrl) {
                 const toolResponse = await fetch(`https://${toolUrl}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -133,7 +128,7 @@ const handler: Handler = async (event: HandlerEvent) => {
             }
 
             const result2 = await chat.sendMessage([
-                { functionResponse: { name: call.name, response: toolResult } }
+                { functionResponse: { name: call.name, response: toolResult || { error: "Tool not found" } } }
             ]);
             const finalResponse = result2.response.text();
             return { statusCode: 200, headers, body: JSON.stringify({ reply: finalResponse }) };
