@@ -50,41 +50,7 @@
                     window.speechSynthesis.speak(utterance);
                 });
             };
-
-            // --- Speech-to-Text (STT) Function ---
-            const listen = () => {
-                if (status !== 'idle') return;
-
-                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-                if (!SpeechRecognition) {
-                    alert("Sorry, your browser doesn't support speech recognition.");
-                    return;
-                }
-
-                if (!recognitionRef.current) {
-                    const recognition = new SpeechRecognition();
-                    recognition.interimResults = false;
-                    recognitionRef.current = recognition;
-
-                    recognition.onstart = () => setStatus('listening');
-                    recognition.onend = () => {
-                        if (status === 'listening') setStatus('idle');
-                    };
-                    recognition.onerror = (event) => {
-                        console.error("Speech recognition error:", event.error);
-                        if (status === 'listening') setStatus('idle');
-                    };
-                    recognition.onresult = (event) => {
-                        const transcript = event.results[0][0].transcript;
-                        const updatedConversation = [...conversation, { role: 'user', text: transcript }];
-                        setConversation(updatedConversation);
-                        getAiReply(updatedConversation); // Pass the new conversation directly
-                    };
-                }
-                
-                recognitionRef.current.start();
-            };
-
+            
             // --- Get AI Reply Function ---
             const getAiReply = async (currentConversation) => {
                 setStatus('thinking');
@@ -118,6 +84,47 @@
                     setConversation(prev => [...prev, { role: 'model', text: errorText }]);
                     await speak(errorText).catch(e => console.error("Error speaking the error message:", e));
                 }
+            };
+
+            // --- Speech-to-Text (STT) Function ---
+            const listen = () => {
+                if (status !== 'idle') return;
+
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                if (!SpeechRecognition) {
+                    alert("Sorry, your browser doesn't support speech recognition.");
+                    return;
+                }
+
+                if (!recognitionRef.current) {
+                    const recognition = new SpeechRecognition();
+                    recognition.interimResults = false;
+                    recognitionRef.current = recognition;
+
+                    recognition.onstart = () => setStatus('listening');
+                    recognition.onend = () => {
+                        if (status === 'listening') setStatus('idle');
+                    };
+                    recognition.onerror = (event) => {
+                        console.error("Speech recognition error:", event.error);
+                        if (status === 'listening') setStatus('idle');
+                    };
+                    
+                    // --- THIS IS THE FIX ---
+                    // The onresult handler now uses the functional form of setConversation
+                    // to ensure it always has the most up-to-date history.
+                    recognition.onresult = (event) => {
+                        const transcript = event.results[0][0].transcript;
+                        
+                        setConversation(prevConversation => {
+                            const updatedConversation = [...prevConversation, { role: 'user', text: transcript }];
+                            getAiReply(updatedConversation); // Call API from within the state updater
+                            return updatedConversation;
+                        });
+                    };
+                }
+                
+                recognitionRef.current.start();
             };
 
             // This effect now only runs once to initialize speech synthesis.
