@@ -1,5 +1,5 @@
 // FILE: netlify/functions/getAiResponse.ts
-// This version adds the new 'rescheduleAppointment' tool.
+// This version includes the CORS fix.
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
@@ -25,7 +25,7 @@ Your goal is to help users book, cancel, or reschedule appointments using your t
 `;
 
 const handler: Handler = async (event: HandlerEvent) => {
-    // Handle OPTIONS request for CORS preflight
+    // Handle the browser's preflight 'OPTIONS' request
     if (event.httpMethod === 'OPTIONS') {
         return {
             statusCode: 200,
@@ -33,6 +33,7 @@ const handler: Handler = async (event: HandlerEvent) => {
             body: JSON.stringify({ message: 'CORS preflight successful' })
         };
     }
+
     if (!process.env.GEMINI_API_KEY) {
         return { statusCode: 500, headers, body: JSON.stringify({ error: "AI configuration error." }) };
     }
@@ -74,11 +75,7 @@ const handler: Handler = async (event: HandlerEvent) => {
                         parameters: {
                             type: "OBJECT",
                             properties: {
-                                doctorName: { type: "STRING", description: "The full name of the doctor for the appointment being rescheduled." },
-                                patientName: { type: "STRING", description: "The full name of the patient whose appointment is being rescheduled." },
-                                oldDate: { type: "STRING", description: "The original date of the appointment in YYYY-MM-DD format." },
-                                newDate: { type: "STRING", description: "The new date for the appointment in YYYY-MM-DD format." },
-                                newTime: { type: "STRING", description: "The new time for the appointment in HH:MM format (24-hour)." }
+                                doctorName: { type: "STRING" }, patientName: { type: "STRING" }, oldDate: { type: "STRING" }, newDate: { type: "STRING" }, newTime: { type: "STRING" }
                             },
                             required: ["doctorName", "patientName", "oldDate", "newDate", "newTime"]
                         },
