@@ -77,6 +77,7 @@
                     const data = await response.json();
                     const aiReplyText = data.reply || "Sorry, I had trouble understanding that.";
                     
+                    // Use a functional update to ensure we have the latest conversation state
                     setConversation(prev => [...prev, { role: 'model', text: aiReplyText }]);
                     await speak(aiReplyText);
 
@@ -88,53 +89,48 @@
                 }
             };
 
-            // --- THIS IS THE FIX: Initialize Speech Recognition once on component mount ---
-            useEffect(() => {
+            // --- Speech-to-Text (STT) Function ---
+            const listen = () => {
+                if (status !== 'idle') return;
+
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 if (!SpeechRecognition) {
-                    console.error("Speech recognition not supported by this browser.");
+                    alert("Sorry, your browser doesn't support speech recognition.");
                     return;
                 }
-                const recognition = new SpeechRecognition();
-                recognition.interimResults = false;
-                recognitionRef.current = recognition;
 
-                recognition.onstart = () => setStatus('listening');
-                
-                recognition.onend = () => {
-                    // This is a safeguard. If recognition ends while we were still 'listening',
-                    // it means no speech was detected, so we reset to idle.
-                    setStatus(currentStatus => (currentStatus === 'listening' ? 'idle' : currentStatus));
-                };
+                if (!recognitionRef.current) {
+                    const recognition = new SpeechRecognition();
+                    recognition.interimResults = false;
+                    recognitionRef.current = recognition;
 
-                recognition.onerror = (event) => {
-                    console.error("Speech recognition error:", event.error);
-                    setStatus('idle'); // Always reset on error
-                };
-                
-                recognition.onresult = (event) => {
-                    const transcript = event.results[0][0].transcript;
-                    setConversation(prevConversation => {
-                        const updatedConversation = [...prevConversation, { role: 'user', text: transcript }];
-                        getAiReply(updatedConversation);
-                        return updatedConversation;
-                    });
-                };
-            }, []); // The empty array [] ensures this runs only once.
-
-            // --- Speech-to-Text (STT) Start Function ---
-            const listen = () => {
-                if (status !== 'idle' || !recognitionRef.current) return;
-                window.speechSynthesis.cancel(); // Stop any speaking before listening
-                try {
-                    recognitionRef.current.start();
-                } catch (error) {
-                    console.error("Could not start speech recognition:", error);
-                    setStatus('idle');
+                    recognition.onstart = () => setStatus('listening');
+                    recognition.onend = () => {
+                        if (status === 'listening') setStatus('idle');
+                    };
+                    recognition.onerror = (event) => {
+                        console.error("Speech recognition error:", event.error);
+                        if (status === 'listening') setStatus('idle');
+                    };
+                    
+                    // --- THIS IS THE FIX ---
+                    // The onresult handler now uses the functional form of setConversation
+                    // to ensure it always has the most up-to-date history.
+                    recognition.onresult = (event) => {
+                        const transcript = event.results[0][0].transcript;
+                        
+                        setConversation(prevConversation => {
+                            const updatedConversation = [...prevConversation, { role: 'user', text: transcript }];
+                            getAiReply(updatedConversation); // Call API from within the state updater
+                            return updatedConversation;
+                        });
+                    };
                 }
+                
+                recognitionRef.current.start();
             };
 
-            // This effect warms up the speech synthesis engine.
+            // This effect warms up the speech synthesis engine but does not speak automatically.
             useEffect(() => {
                 const warmUpSpeechSynthesis = () => {
                     if (window.speechSynthesis.getVoices().length > 0) {
