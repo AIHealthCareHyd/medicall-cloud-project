@@ -1,11 +1,13 @@
 // FILE: netlify/functions/getAiResponse.ts
-// This is the final, fully functional version with all tools and branding.
+// This version adds the new 'rescheduleAppointment' tool.
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 
+// --- THIS IS THE FIX ---
+// Define common headers, including the CORS fix
 const headers = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': '*', // Allows any origin to access this function
   'Access-Control-Allow-Headers': 'Content-Type',
   'Content-Type': 'application/json'
 };
@@ -23,8 +25,13 @@ Your goal is to help users book, cancel, or reschedule appointments using your t
 `;
 
 const handler: Handler = async (event: HandlerEvent) => {
+    // Handle OPTIONS request for CORS preflight
     if (event.httpMethod === 'OPTIONS') {
-        return { statusCode: 200, headers, body: JSON.stringify({ message: 'CORS preflight successful' }) };
+        return {
+            statusCode: 200,
+            headers,
+            body: JSON.stringify({ message: 'CORS preflight successful' })
+        };
     }
     if (!process.env.GEMINI_API_KEY) {
         return { statusCode: 500, headers, body: JSON.stringify({ error: "AI configuration error." }) };
