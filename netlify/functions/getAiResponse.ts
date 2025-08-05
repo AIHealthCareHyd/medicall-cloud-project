@@ -1,5 +1,5 @@
 // FILE: netlify/functions/getAiResponse.ts
-// This version includes the definitive CORS fix.
+// This version includes the definitive CORS fix and restored tool definitions.
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
@@ -53,7 +53,38 @@ const handler: Handler = async (event: HandlerEvent) => {
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
         const model = genAI.getGenerativeModel({ 
             model: "gemini-1.5-flash",
-            tools: { /* ... your tool definitions ... */ },
+            // --- THIS IS THE FIX ---
+            // The full tool definitions have been restored.
+            tools: {
+                functionDeclarations: [
+                    {
+                        name: "getDoctorDetails",
+                        description: "Get a list of available doctors and their specialties.",
+                        parameters: { type: "OBJECT", properties: { specialty: { type: "STRING" } } },
+                    },
+                    {
+                        name: "bookAppointment",
+                        description: "Books a medical appointment.",
+                        parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, date: { type: "STRING" }, time: { type: "STRING" } }, required: ["doctorName", "patientName", "date", "time"] },
+                    },
+                    {
+                        name: "cancelAppointment",
+                        description: "Cancels an existing medical appointment.",
+                        parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, date: { type: "STRING" } }, required: ["doctorName", "patientName", "date"] },
+                    },
+                    {
+                        name: "rescheduleAppointment",
+                        description: "Reschedules an existing medical appointment to a new date and time.",
+                        parameters: {
+                            type: "OBJECT",
+                            properties: {
+                                doctorName: { type: "STRING" }, patientName: { type: "STRING" }, oldDate: { type: "STRING" }, newDate: { type: "STRING" }, newTime: { type: "STRING" }
+                            },
+                            required: ["doctorName", "patientName", "oldDate", "newDate", "newTime"]
+                        },
+                    },
+                ],
+            },
         }); 
         
         const chat = model.startChat({
