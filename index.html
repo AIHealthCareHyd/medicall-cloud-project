@@ -1,199 +1,143 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Prudence Health Assistant</title>
-    <!-- 1. Load Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- 2. Load React and Babel -->
-    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-</head>
-<body class="bg-gray-100">
+// FILE: netlify/functions/getAiResponse.ts
+// This version adds the new 'rescheduleAppointment' tool.
 
-    <div id="root"></div>
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import type { Handler, HandlerEvent } from '@netlify/functions';
 
-    <!-- 3. Your React Application Code -->
-    <script type="text/babel">
+// --- THIS IS THE FIX ---
+// Define common headers, including the CORS fix
+const headers = {
+  'Access-Control-Allow-Origin': '*', // Allows any origin to access this function
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Content-Type': 'application/json'
+};
 
-        const { useState, useEffect, useRef } = React;
+const systemPrompt = `
+You are Sahay, an AI medical appointment assistant for Prudence Hospitals.
+Your goal is to help users book, cancel, or reschedule appointments using your tools.
+- Use 'getDoctorDetails' to find a doctor.
+- Use 'bookAppointment' to schedule a new appointment.
+- Use 'cancelAppointment' to cancel an existing appointment.
+- If a user wants to change an appointment, you MUST use the 'rescheduleAppointment' tool.
+- Extract all necessary details (patient name, doctor name, old date, new date, new time) from the conversation to use with your tools.
+- After a successful action, confirm the details with the user.
+- Do not provide medical advice.
+`;
 
-        function App() {
-            const [conversation, setConversation] = useState([
-                { role: 'model', text: "Welcome to Prudence Hospitals. I'm Sahay, your AI assistant. How can I help you today?" }
-            ]);
-            const [status, setStatus] = useState('idle'); // idle, listening, thinking, speaking
-            const recognitionRef = useRef(null);
+const handler: Handler = async (event: HandlerEvent) => {
+    // Handle OPTIONS request for CORS preflight
+    if (event.httpMethod === 'OPTIONS') {
+        return {
+            statusCode: 200,
+            headers,
+            body: JSON.stringify({ message: 'CORS preflight successful' })
+        };
+    }
+    if (!process.env.GEMINI_API_KEY) {
+        return { statusCode: 500, headers, body: JSON.stringify({ error: "AI configuration error." }) };
+    }
+    let body;
+    try {
+        body = JSON.parse(event.body || '{}');
+    } catch (e) {
+        return { statusCode: 400, headers, body: JSON.stringify({ error: "Invalid request body." }) };
+    }
+    const { history } = body;
+    if (!history || !Array.isArray(history) || history.length === 0) {
+        return { statusCode: 400, headers, body: JSON.stringify({ error: "No history provided." }) };
+    }
 
-            // --- Text-to-Speech (TTS) Function ---
-            const speak = (text) => {
-                window.speechSynthesis.cancel();
-                return new Promise((resolve, reject) => {
-                    setStatus('speaking');
-                    const utterance = new SpeechSynthesisUtterance(text);
-                    const voices = window.speechSynthesis.getVoices();
-                    if (voices.length > 0) {
-                        const femaleVoice = voices.find(voice => voice.lang.startsWith('en') && (voice.gender === 'female' || voice.name.includes('Female')));
-                        if (femaleVoice) utterance.voice = femaleVoice;
-                    }
-                    utterance.onend = () => {
-                        setStatus('idle');
-                        resolve();
-                    };
-                    utterance.onerror = (event) => {
-                        console.error("SpeechSynthesis Error", event);
-                        setStatus('idle');
-                        reject(event.error);
-                    };
-                    window.speechSynthesis.speak(utterance);
+    try {
+        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+        const model = genAI.getGenerativeModel({ 
+            model: "gemini-1.5-flash",
+            tools: {
+                functionDeclarations: [
+                    {
+                        name: "getDoctorDetails",
+                        description: "Get a list of available doctors and their specialties.",
+                        parameters: { type: "OBJECT", properties: { specialty: { type: "STRING" } } },
+                    },
+                    {
+                        name: "bookAppointment",
+                        description: "Books a medical appointment.",
+                        parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, date: { type: "STRING" }, time: { type: "STRING" } }, required: ["doctorName", "patientName", "date", "time"] },
+                    },
+                    {
+                        name: "cancelAppointment",
+                        description: "Cancels an existing medical appointment.",
+                        parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, date: { type: "STRING" } }, required: ["doctorName", "patientName", "date"] },
+                    },
+                    {
+                        name: "rescheduleAppointment",
+                        description: "Reschedules an existing medical appointment to a new date and time.",
+                        parameters: {
+                            type: "OBJECT",
+                            properties: {
+                                doctorName: { type: "STRING", description: "The full name of the doctor for the appointment being rescheduled." },
+                                patientName: { type: "STRING", description: "The full name of the patient whose appointment is being rescheduled." },
+                                oldDate: { type: "STRING", description: "The original date of the appointment in YYYY-MM-DD format." },
+                                newDate: { type: "STRING", description: "The new date for the appointment in YYYY-MM-DD format." },
+                                newTime: { type: "STRING", description: "The new time for the appointment in HH:MM format (24-hour)." }
+                            },
+                            required: ["doctorName", "patientName", "oldDate", "newDate", "newTime"]
+                        },
+                    },
+                ],
+            },
+        }); 
+        
+        const chat = model.startChat({
+            history: [
+                { role: "user", parts: [{ text: systemPrompt }] },
+                { role: "model", parts: [{ text: "Understood. I am Sahay, an AI assistant for Prudence Hospitals. How can I assist?" }] },
+                ...history.slice(0, -1)
+            ]
+        });
+
+        const latestUserMessage = history[history.length - 1].parts[0].text;
+        const result = await chat.sendMessage(latestUserMessage);
+        const response = result.response;
+        const functionCalls = response.functionCalls();
+
+        if (functionCalls && functionCalls.length > 0) {
+            const call = functionCalls[0];
+            let toolResult;
+            let toolUrl;
+
+            if (call.name === 'getDoctorDetails') {
+                toolUrl = `${event.headers.host}/.netlify/functions/getDoctorDetails`;
+            } else if (call.name === 'bookAppointment') {
+                toolUrl = `${event.headers.host}/.netlify/functions/bookAppointment`;
+            } else if (call.name === 'cancelAppointment') {
+                toolUrl = `${event.headers.host}/.netlify/functions/cancelAppointment`;
+            } else if (call.name === 'rescheduleAppointment') {
+                toolUrl = `${event.headers.host}/.netlify/functions/rescheduleAppointment`;
+            }
+
+            if (toolUrl) {
+                const toolResponse = await fetch(`https://${toolUrl}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(call.args),
                 });
-            };
-            
-            // --- Get AI Reply Function ---
-            const getAiReply = async (currentConversation) => {
-                setStatus('thinking');
-                
-                const historyForApi = currentConversation.map(turn => ({
-                    role: turn.role,
-                    parts: [{ text: turn.text }]
-                }));
+                toolResult = await toolResponse.json();
+            }
 
-                const functionUrl = 'https://superlative-halva-403910.netlify.app/.netlify/functions/getAiResponse'; 
-
-                try {
-                    const response = await fetch(functionUrl, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ history: historyForApi }),
-                    });
-
-                    if (!response.ok) {
-                        const errorText = await response.text();
-                        throw new Error(`Network error: ${response.status} - ${errorText}`);
-                    }
-
-                    const data = await response.json();
-                    const aiReplyText = data.reply || "Sorry, I had trouble understanding that.";
-                    
-                    // Use a functional update to ensure we have the latest conversation state
-                    setConversation(prev => [...prev, { role: 'model', text: aiReplyText }]);
-                    await speak(aiReplyText);
-
-                } catch (error) {
-                    console.error("Error fetching AI response:", error);
-                    const errorText = `There was an error: ${error.message}`;
-                    setConversation(prev => [...prev, { role: 'model', text: errorText }]);
-                    await speak(errorText).catch(e => console.error("Error speaking the error message:", e));
-                }
-            };
-
-            // --- Speech-to-Text (STT) Function ---
-            const listen = () => {
-                if (status !== 'idle') return;
-
-                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-                if (!SpeechRecognition) {
-                    alert("Sorry, your browser doesn't support speech recognition.");
-                    return;
-                }
-
-                if (!recognitionRef.current) {
-                    const recognition = new SpeechRecognition();
-                    recognition.interimResults = false;
-                    recognitionRef.current = recognition;
-
-                    recognition.onstart = () => setStatus('listening');
-                    recognition.onend = () => {
-                        if (status === 'listening') setStatus('idle');
-                    };
-                    recognition.onerror = (event) => {
-                        console.error("Speech recognition error:", event.error);
-                        if (status === 'listening') setStatus('idle');
-                    };
-                    
-                    // --- THIS IS THE FIX ---
-                    // The onresult handler now uses the functional form of setConversation
-                    // to ensure it always has the most up-to-date history.
-                    recognition.onresult = (event) => {
-                        const transcript = event.results[0][0].transcript;
-                        
-                        setConversation(prevConversation => {
-                            const updatedConversation = [...prevConversation, { role: 'user', text: transcript }];
-                            getAiReply(updatedConversation); // Call API from within the state updater
-                            return updatedConversation;
-                        });
-                    };
-                }
-                
-                recognitionRef.current.start();
-            };
-
-            // This effect warms up the speech synthesis engine but does not speak automatically.
-            useEffect(() => {
-                const warmUpSpeechSynthesis = () => {
-                    if (window.speechSynthesis.getVoices().length > 0) {
-                        console.log("Speech synthesis voices loaded.");
-                    }
-                };
-                if (window.speechSynthesis.onvoiceschanged !== undefined) {
-                    window.speechSynthesis.onvoiceschanged = warmUpSpeechSynthesis;
-                }
-                warmUpSpeechSynthesis();
-
-                return () => {
-                    window.speechSynthesis.onvoiceschanged = null;
-                };
-            }, []);
-
-            const getButtonText = () => {
-                switch (status) {
-                    case 'listening': return 'Listening...';
-                    case 'thinking': return 'Thinking...';
-                    case 'speaking': return 'Speaking...';
-                    default: return 'Talk to Sahay';
-                }
-            };
-
-            return (
-                <div className="flex flex-col items-center justify-center min-h-screen text-gray-800 font-sans p-4 bg-gray-50">
-                    <div className="w-full max-w-md p-6 bg-white rounded-lg shadow-xl">
-                        <div className="text-center mb-4">
-                            <h1 className="text-3xl font-bold text-blue-900">PRUDENCE</h1>
-                            <p className="text-sm tracking-widest text-blue-800">HOSPITALS</p>
-                        </div>
-                        
-                        <h2 className="text-xl font-semibold text-center text-gray-700 mb-2">Health Assistant</h2>
-                        <p className="text-center text-gray-500 mb-6">Your AI Voice Assistant</p>
-                        
-                        <div className="p-4 bg-gray-100 rounded-md min-h-[250px] mb-4 overflow-y-auto flex flex-col gap-2">
-                            {conversation.map((turn, index) => (
-                                <div key={index} className={`p-3 rounded-lg max-w-[85%] ${turn.role === 'user' ? 'bg-gray-200 self-end' : 'bg-blue-100 self-start'}`}>
-                                    <p>{turn.text}</p>
-                                </div>
-                            ))}
-                        </div>
-                        
-                        <div className="flex justify-center mt-4">
-                            <button
-                                onClick={listen}
-                                disabled={status !== 'idle'}
-                                className="px-8 py-4 bg-orange-500 text-white font-bold rounded-full shadow-lg hover:bg-orange-600 transition-all duration-300 disabled:bg-gray-400 disabled:cursor-not-allowed"
-                            >
-                                {getButtonText()}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            );
+            const result2 = await chat.sendMessage([
+                { functionResponse: { name: call.name, response: toolResult || { error: "Tool not found" } } }
+            ]);
+            const finalResponse = result2.response.text();
+            return { statusCode: 200, headers, body: JSON.stringify({ reply: finalResponse }) };
         }
 
-        const container = document.getElementById('root');
-        const root = ReactDOM.createRoot(container);
-        root.render(<App />);
+        const text = response.text();
+        return { statusCode: 200, headers, body: JSON.stringify({ reply: text }) };
 
-    </script>
+    } catch (error) {
+        console.error("FATAL: Error during Gemini API call or tool execution.", error);
+        return { statusCode: 500, headers, body: JSON.stringify({ error: "Failed to process request." }) };
+    }
+};
 
-</body>
-</html>
+export { handler };
