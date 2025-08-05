@@ -69,12 +69,7 @@
                         body: JSON.stringify({ history: historyForApi }),
                     });
 
-                    // --- THIS IS THE FIX ---
-                    // Added specific error handling for different HTTP statuses.
                     if (!response.ok) {
-                        if (response.status === 429) {
-                            throw new Error("Too many requests. Please wait a minute before trying again.");
-                        }
                         const errorText = await response.text();
                         throw new Error(`Network error: ${response.status} - ${errorText}`);
                     }
@@ -93,45 +88,53 @@
                 }
             };
 
-            // --- Speech-to-Text (STT) Function ---
-            const listen = () => {
-                if (status !== 'idle') return;
-
+            // --- THIS IS THE FIX: Initialize Speech Recognition once on component mount ---
+            useEffect(() => {
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 if (!SpeechRecognition) {
-                    alert("Sorry, your browser doesn't support speech recognition.");
+                    console.error("Speech recognition not supported by this browser.");
                     return;
                 }
+                const recognition = new SpeechRecognition();
+                recognition.interimResults = false;
+                recognitionRef.current = recognition;
 
-                if (!recognitionRef.current) {
-                    const recognition = new SpeechRecognition();
-                    recognition.interimResults = false;
-                    recognitionRef.current = recognition;
-
-                    recognition.onstart = () => setStatus('listening');
-                    recognition.onend = () => {
-                        if (status === 'listening') setStatus('idle');
-                    };
-                    recognition.onerror = (event) => {
-                        console.error("Speech recognition error:", event.error);
-                        if (status === 'listening') setStatus('idle');
-                    };
-                    
-                    recognition.onresult = (event) => {
-                        const transcript = event.results[0][0].transcript;
-                        
-                        setConversation(prevConversation => {
-                            const updatedConversation = [...prevConversation, { role: 'user', text: transcript }];
-                            getAiReply(updatedConversation);
-                            return updatedConversation;
-                        });
-                    };
-                }
+                recognition.onstart = () => setStatus('listening');
                 
-                recognitionRef.current.start();
+                recognition.onend = () => {
+                    // This is a safeguard. If recognition ends while we were still 'listening',
+                    // it means no speech was detected, so we reset to idle.
+                    setStatus(currentStatus => (currentStatus === 'listening' ? 'idle' : currentStatus));
+                };
+
+                recognition.onerror = (event) => {
+                    console.error("Speech recognition error:", event.error);
+                    setStatus('idle'); // Always reset on error
+                };
+                
+                recognition.onresult = (event) => {
+                    const transcript = event.results[0][0].transcript;
+                    setConversation(prevConversation => {
+                        const updatedConversation = [...prevConversation, { role: 'user', text: transcript }];
+                        getAiReply(updatedConversation);
+                        return updatedConversation;
+                    });
+                };
+            }, []); // The empty array [] ensures this runs only once.
+
+            // --- Speech-to-Text (STT) Start Function ---
+            const listen = () => {
+                if (status !== 'idle' || !recognitionRef.current) return;
+                window.speechSynthesis.cancel(); // Stop any speaking before listening
+                try {
+                    recognitionRef.current.start();
+                } catch (error) {
+                    console.error("Could not start speech recognition:", error);
+                    setStatus('idle');
+                }
             };
 
-            // This effect warms up the speech synthesis engine but does not speak automatically.
+            // This effect warms up the speech synthesis engine.
             useEffect(() => {
                 const warmUpSpeechSynthesis = () => {
                     if (window.speechSynthesis.getVoices().length > 0) {
