@@ -60,7 +60,9 @@
                     parts: [{ text: turn.text }]
                 }));
 
-                const functionUrl = 'https://superlative-halva-403910.netlify.app/.netlify/functions/getAiResponse'; 
+                // --- THIS IS THE FIX ---
+                // Updated the URL to use your new custom domain name.
+                const functionUrl = 'https://sahayhealth.netlify.app/.netlify/functions/getAiResponse'; 
 
                 try {
                     const response = await fetch(functionUrl, {
