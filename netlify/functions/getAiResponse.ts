@@ -54,8 +54,8 @@ const handler: Handler = async (event: HandlerEvent) => {
         const model = genAI.getGenerativeModel({ 
             model: "gemini-1.5-flash",
             // --- THIS IS THE FIX ---
-            // The full tool definitions have been restored.
-            tools: {
+            // The tool definitions are now correctly wrapped in an array.
+            tools: [{
                 functionDeclarations: [
                     {
                         name: "getDoctorDetails",
@@ -84,7 +84,7 @@ const handler: Handler = async (event: HandlerEvent) => {
                         },
                     },
                 ],
-            },
+            }],
         }); 
         
         const chat = model.startChat({
