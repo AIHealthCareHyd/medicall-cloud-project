@@ -4,9 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Prudence Health Assistant</title>
-    <!-- 1. Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- 2. Load React and Babel -->
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -15,7 +13,6 @@
 
     <div id="root"></div>
 
-    <!-- 3. Your React Application Code -->
     <script type="text/babel">
 
         const { useState, useEffect, useRef } = React;
@@ -25,7 +22,22 @@
                 { role: 'model', text: "Welcome to Prudence Hospitals. I'm Sahay, your AI assistant. How can I help you today?" }
             ]);
             const [status, setStatus] = useState('idle'); // idle, listening, thinking, speaking
+            
+            // --- KEY CHANGE 1: Master state to control the listening session ---
+            const [isListeningActive, setIsListeningActive] = useState(false);
+            
             const recognitionRef = useRef(null);
+            const conversationEndRef = useRef(null);
+
+            // Function to scroll the chat view to the bottom
+            const scrollToBottom = () => {
+                conversationEndRef.current?.scrollIntoView({ behavior: "smooth" });
+            };
+
+            useEffect(() => {
+                scrollToBottom();
+            }, [conversation]);
+
 
             // --- Text-to-Speech (TTS) Function ---
             const speak = (text) => {
@@ -40,7 +52,7 @@
                     }
                     utterance.onend = () => {
                         setStatus('idle');
-                        resolve();
+                        resolve(); // Resolve the promise when speaking is finished
                     };
                     utterance.onerror = (event) => {
                         console.error("SpeechSynthesis Error", event);
@@ -60,9 +72,7 @@
                     parts: [{ text: turn.text }]
                 }));
 
-                // --- THIS IS THE FIX ---
-                // Updated the URL to use your new custom domain name.
-                const functionUrl = 'https://sahayhealth.netlify.app/.netlify/functions/getAiResponse'; 
+                const functionUrl = 'https://sahayhealth.netlify.app/.netlify/functions/getAiResponse';
 
                 try {
                     const response = await fetch(functionUrl, {
@@ -80,79 +90,121 @@
                     const aiReplyText = data.reply || "Sorry, I had trouble understanding that.";
                     
                     setConversation(prev => [...prev, { role: 'model', text: aiReplyText }]);
+                    
+                    // --- KEY CHANGE 2: Wait for speech to finish before potentially restarting recognition ---
                     await speak(aiReplyText);
+                    
+                    // After speaking, if the user still wants to be in listening mode, restart recognition.
+                    if (isListeningActive) {
+                        recognitionRef.current.start();
+                    }
 
                 } catch (error) {
                     console.error("Error fetching AI response:", error);
                     const errorText = `There was an error: ${error.message}`;
                     setConversation(prev => [...prev, { role: 'model', text: errorText }]);
                     await speak(errorText).catch(e => console.error("Error speaking the error message:", e));
+                     // Also restart recognition here if needed
+                    if (isListeningActive) {
+                        recognitionRef.current.start();
+                    }
                 }
             };
 
-            // --- Speech-to-Text (STT) Function ---
-            const listen = () => {
-                if (status !== 'idle') return;
+            // --- KEY CHANGE 3: Logic to start/stop the continuous listening session ---
+            const toggleListening = () => {
+                // If we are currently active, turn it off.
+                if (isListeningActive) {
+                    setIsListeningActive(false);
+                    if (recognitionRef.current) {
+                        recognitionRef.current.stop();
+                    }
+                } else {
+                // If we are not active, turn it on and start recognition.
+                    setIsListeningActive(true);
+                    if (recognitionRef.current) {
+                        recognitionRef.current.start();
+                    }
+                }
+            };
 
+            // --- KEY CHANGE 4: Use useEffect to set up the recognition object and its event handlers once ---
+            useEffect(() => {
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 if (!SpeechRecognition) {
                     alert("Sorry, your browser doesn't support speech recognition.");
                     return;
                 }
 
-                if (!recognitionRef.current) {
-                    const recognition = new SpeechRecognition();
-                    recognition.interimResults = false;
-                    recognitionRef.current = recognition;
+                const recognition = new SpeechRecognition();
+                recognition.continuous = true; // Listen continuously
+                recognition.interimResults = false; // Only get final results
 
-                    recognition.onstart = () => setStatus('listening');
-                    recognition.onend = () => {
-                        if (status === 'listening') setStatus('idle');
-                    };
-                    recognition.onerror = (event) => {
-                        console.error("Speech recognition error:", event.error);
-                        if (status === 'listening') setStatus('idle');
-                    };
-                    
-                    recognition.onresult = (event) => {
-                        const transcript = event.results[0][0].transcript;
-                        
-                        setConversation(prevConversation => {
-                            const updatedConversation = [...prevConversation, { role: 'user', text: transcript }];
-                            getAiReply(updatedConversation);
-                            return updatedConversation;
-                        });
-                    };
-                }
+                recognition.onstart = () => setStatus('listening');
                 
-                recognitionRef.current.start();
-            };
-
-            // This effect warms up the speech synthesis engine but does not speak automatically.
-            useEffect(() => {
-                const warmUpSpeechSynthesis = () => {
-                    if (window.speechSynthesis.getVoices().length > 0) {
-                        console.log("Speech synthesis voices loaded.");
+                recognition.onend = () => {
+                    // Only set status to idle if the listening session was manually stopped.
+                    // If it stops for any other reason (e.g., network error, long pause), the toggleListening function
+                    // or the getAiReply function will handle restarting it if isListeningActive is true.
+                    if (!isListeningActive) {
+                       setStatus('idle');
                     }
                 };
-                if (window.speechSynthesis.onvoiceschanged !== undefined) {
-                    window.speechSynthesis.onvoiceschanged = warmUpSpeechSynthesis;
-                }
-                warmUpSpeechSynthesis();
 
-                return () => {
-                    window.speechSynthesis.onvoiceschanged = null;
+                recognition.onerror = (event) => {
+                    console.error("Speech recognition error:", event.error);
+                    if (event.error === 'no-speech') {
+                       // Don't do anything, just let it time out and onend will handle restart if needed.
+                    } else {
+                       setStatus('idle');
+                    }
                 };
+                
+                recognition.onresult = (event) => {
+                    const transcript = event.results[event.results.length - 1][0].transcript.trim();
+
+                    // --- KEY CHANGE 5: Stop recognition while we process and get a reply ---
+                    // This prevents it from listening to the AI's response.
+                    recognition.stop();
+                    
+                    setConversation(prevConversation => {
+                        const updatedConversation = [...prevConversation, { role: 'user', text: transcript }];
+                        getAiReply(updatedConversation); // getAiReply will restart recognition if needed
+                        return updatedConversation;
+                    });
+                };
+
+                recognitionRef.current = recognition;
+                
+                // Cleanup function to stop recognition if the component unmounts
+                return () => {
+                    if (recognitionRef.current) {
+                        recognitionRef.current.stop();
+                    }
+                };
+            }, [isListeningActive]); // Rerun effect parts if isListeningActive changes.
+
+            // This effect warms up the speech synthesis engine.
+            useEffect(() => {
+                const warmUp = () => window.speechSynthesis.getVoices();
+                if (window.speechSynthesis.onvoiceschanged !== undefined) {
+                    window.speechSynthesis.onvoiceschanged = warmUp;
+                }
+                warmUp();
+                return () => { window.speechSynthesis.onvoiceschanged = null; };
             }, []);
 
-            const getButtonText = () => {
-                switch (status) {
-                    case 'listening': return 'Listening...';
-                    case 'thinking': return 'Thinking...';
-                    case 'speaking': return 'Speaking...';
-                    default: return 'Talk to Sahay';
+            const getButtonTextAndStyle = () => {
+                if (isListeningActive) {
+                    if (status === 'thinking' || status === 'speaking') {
+                        return { text: status.charAt(0).toUpperCase() + status.slice(1) + '...', style: "bg-gray-400 cursor-not-allowed"};
+                    }
+                    return { text: 'Stop Listening', style: "bg-red-500 hover:bg-red-600" };
                 }
+                return { text: 'Talk to Sahay', style: "bg-orange-500 hover:bg-orange-600" };
             };
+
+            const { text: buttonText, style: buttonStyle } = getButtonTextAndStyle();
 
             return (
                 <div className="flex flex-col items-center justify-center min-h-screen text-gray-800 font-sans p-4 bg-gray-50">
@@ -165,21 +217,23 @@
                         <h2 className="text-xl font-semibold text-center text-gray-700 mb-2">Health Assistant</h2>
                         <p className="text-center text-gray-500 mb-6">Your AI Voice Assistant</p>
                         
-                        <div className="p-4 bg-gray-100 rounded-md min-h-[250px] mb-4 overflow-y-auto flex flex-col gap-2">
+                        {/* --- KEY CHANGE 6: Added a ref to the container for scrolling --- */}
+                        <div className="p-4 bg-gray-100 rounded-md h-[300px] mb-4 overflow-y-auto flex flex-col gap-2">
                             {conversation.map((turn, index) => (
                                 <div key={index} className={`p-3 rounded-lg max-w-[85%] ${turn.role === 'user' ? 'bg-gray-200 self-end' : 'bg-blue-100 self-start'}`}>
                                     <p>{turn.text}</p>
                                 </div>
                             ))}
+                             <div ref={conversationEndRef} />
                         </div>
                         
                         <div className="flex justify-center mt-4">
                             <button
-                                onClick={listen}
-                                disabled={status !== 'idle'}
-                                className="px-8 py-4 bg-orange-500 text-white font-bold rounded-full shadow-lg hover:bg-orange-600 transition-all duration-300 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                                onClick={toggleListening}
+                                disabled={isListeningActive && (status === 'thinking' || status === 'speaking')}
+                                className={`px-8 py-4 text-white font-bold rounded-full shadow-lg transition-all duration-300 disabled:cursor-not-allowed ${buttonStyle}`}
                             >
-                                {getButtonText()}
+                                {buttonText}
                             </button>
                         </div>
                     </div>
