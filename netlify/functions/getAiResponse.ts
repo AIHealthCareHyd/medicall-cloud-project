@@ -1,5 +1,5 @@
 // FILE: netlify/functions/getAiResponse.ts
-// This version includes the definitive CORS fix and the corrected tool definition format.
+// This version includes conversation history and improved date handling instructions.
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
@@ -12,13 +12,12 @@ const headers = {
 };
 
 const systemPrompt = `
-You are Sahay, an AI medical appointment assistant for Prudence Hospitals.
-Your goal is to help users book, cancel, or reschedule appointments using your tools.
-- Use 'getDoctorDetails' to find a doctor.
-- Use 'bookAppointment' to schedule a new appointment.
-- Use 'cancelAppointment' to cancel an existing appointment.
-- If a user wants to change an appointment, you MUST use the 'rescheduleAppointment' tool.
-- Extract all necessary details from the conversation to use with your tools.
+You are Sahay, a friendly and efficient AI medical appointment assistant for Prudence Hospitals.
+Your primary goal is to help users book, cancel, or reschedule appointments using your tools.
+- You are aware that the current date is August 7, 2025.
+- Be flexible with date and time formats. A user might say "next Friday" or "tomorrow at 5pm". You must interpret this and convert it to the required YYYY-MM-DD and HH:MM format for your tools.
+- Do not repeatedly ask for a specific format. Instead, ask clarifying questions if you are unsure. For example, if a user says "the 15th," ask "Which month for the 15th?".
+- Gather all necessary information (like patient name, doctor specialty, date, and time) through conversation before calling a tool.
 - After a successful action, confirm the details with the user.
 - Do not provide medical advice.
 `;
@@ -41,6 +40,8 @@ const handler: Handler = async (event: HandlerEvent) => {
     } catch (e) {
         return { statusCode: 400, headers, body: JSON.stringify({ error: "Invalid request body." }) };
     }
+    
+    // --- UPDATED: Get the history from the request body ---
     const { history } = body;
     if (!history || !Array.isArray(history) || history.length === 0) {
         return { statusCode: 400, headers, body: JSON.stringify({ error: "No history provided." }) };
@@ -50,8 +51,6 @@ const handler: Handler = async (event: HandlerEvent) => {
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
         const model = genAI.getGenerativeModel({ 
             model: "gemini-1.5-flash",
-            // --- THIS IS THE FIX ---
-            // The tool definitions are now correctly wrapped in an array [].
             tools: [{
                 functionDeclarations: [
                     {
@@ -84,15 +83,19 @@ const handler: Handler = async (event: HandlerEvent) => {
             }],
         }); 
         
+        // --- UPDATED: Start the chat with the full conversation history ---
         const chat = model.startChat({
             history: [
                 { role: "user", parts: [{ text: systemPrompt }] },
                 { role: "model", parts: [{ text: "Understood. I am Sahay, an AI assistant for Prudence Hospitals. How can I assist?" }] },
-                ...history.slice(0, -1)
+                // Spread the rest of the conversation history
+                ...history.slice(0, -1) // Send all but the most recent user message
             ]
         });
 
+        // Get the latest user message to send
         const latestUserMessage = history[history.length - 1].parts[0].text;
+
         const result = await chat.sendMessage(latestUserMessage);
         const response = result.response;
         const functionCalls = response.functionCalls();
