@@ -1,19 +1,4 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Prudence Health Assistant</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-</head>
-<body class="bg-gray-100">
-
-    <div id="root"></div>
-
-    <script type="text/babel">
+<script type="text/babel">
 
         const { useState, useEffect, useRef } = React;
 
@@ -22,14 +7,11 @@
                 { role: 'model', text: "Welcome to Prudence Hospitals. I'm Sahay, your AI assistant. How can I help you today?" }
             ]);
             const [status, setStatus] = useState('idle'); // idle, listening, thinking, speaking
-            
-            // --- KEY CHANGE 1: Master state to control the listening session ---
             const [isListeningActive, setIsListeningActive] = useState(false);
             
             const recognitionRef = useRef(null);
             const conversationEndRef = useRef(null);
 
-            // Function to scroll the chat view to the bottom
             const scrollToBottom = () => {
                 conversationEndRef.current?.scrollIntoView({ behavior: "smooth" });
             };
@@ -38,8 +20,6 @@
                 scrollToBottom();
             }, [conversation]);
 
-
-            // --- Text-to-Speech (TTS) Function ---
             const speak = (text) => {
                 window.speechSynthesis.cancel();
                 return new Promise((resolve, reject) => {
@@ -52,7 +32,7 @@
                     }
                     utterance.onend = () => {
                         setStatus('idle');
-                        resolve(); // Resolve the promise when speaking is finished
+                        resolve();
                     };
                     utterance.onerror = (event) => {
                         console.error("SpeechSynthesis Error", event);
@@ -63,7 +43,6 @@
                 });
             };
             
-            // --- Get AI Reply Function ---
             const getAiReply = async (currentConversation) => {
                 setStatus('thinking');
                 
@@ -91,11 +70,9 @@
                     
                     setConversation(prev => [...prev, { role: 'model', text: aiReplyText }]);
                     
-                    // --- KEY CHANGE 2: Wait for speech to finish before potentially restarting recognition ---
                     await speak(aiReplyText);
                     
-                    // After speaking, if the user still wants to be in listening mode, restart recognition.
-                    if (isListeningActive) {
+                    if (isListeningActive && recognitionRef.current) {
                         recognitionRef.current.start();
                     }
 
@@ -104,31 +81,28 @@
                     const errorText = `There was an error: ${error.message}`;
                     setConversation(prev => [...prev, { role: 'model', text: errorText }]);
                     await speak(errorText).catch(e => console.error("Error speaking the error message:", e));
-                     // Also restart recognition here if needed
-                    if (isListeningActive) {
+                    if (isListeningActive && recognitionRef.current) {
                         recognitionRef.current.start();
                     }
                 }
             };
 
-            // --- KEY CHANGE 3: Logic to start/stop the continuous listening session ---
             const toggleListening = () => {
-                // If we are currently active, turn it off.
-                if (isListeningActive) {
-                    setIsListeningActive(false);
+                const currentlyActive = !isListeningActive;
+                setIsListeningActive(currentlyActive);
+
+                if (currentlyActive) {
+                    if (recognitionRef.current) {
+                        recognitionRef.current.start();
+                    }
+                } else {
                     if (recognitionRef.current) {
                         recognitionRef.current.stop();
                     }
-                } else {
-                // If we are not active, turn it on and start recognition.
-                    setIsListeningActive(true);
-                    if (recognitionRef.current) {
-                        recognitionRef.current.start();
-                    }
                 }
             };
 
-            // --- KEY CHANGE 4: Use useEffect to set up the recognition object and its event handlers once ---
+            // --- MAIN FIX IS HERE ---
             useEffect(() => {
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 if (!SpeechRecognition) {
@@ -136,55 +110,74 @@
                     return;
                 }
 
-                const recognition = new SpeechRecognition();
-                recognition.continuous = true; // Listen continuously
-                recognition.interimResults = false; // Only get final results
-
-                recognition.onstart = () => setStatus('listening');
+                if (!recognitionRef.current) {
+                    recognitionRef.current = new SpeechRecognition();
+                    recognitionRef.current.continuous = true;
+                    recognitionRef.current.interimResults = false;
+                }
                 
+                const recognition = recognitionRef.current;
+
+                recognition.onstart = () => {
+                    setStatus('listening');
+                };
+
+                // UPDATED LOGIC: This handler is now the key to making the session robust.
                 recognition.onend = () => {
-                    // Only set status to idle if the listening session was manually stopped.
-                    // If it stops for any other reason (e.g., network error, long pause), the toggleListening function
-                    // or the getAiReply function will handle restarting it if isListeningActive is true.
-                    if (!isListeningActive) {
-                       setStatus('idle');
+                    // Check if we should be listening. If the master toggle is on, but we are not currently
+                    // processing a request (thinking/speaking), it means recognition stopped on its own
+                    // due to a browser timeout. We should restart it to keep the session alive.
+                    if (isListeningActive && status !== 'thinking' && status !== 'speaking') {
+                        console.log("Recognition timed out, restarting...");
+                        try {
+                            recognition.start();
+                        } catch (e) {
+                            console.error("Error restarting recognition onend:", e);
+                            setStatus('idle');
+                        }
+                    } else if (!isListeningActive) {
+                        // This handles the case where the user manually clicked "Stop Listening".
+                        setStatus('idle');
                     }
+                    // If isListeningActive is true BUT status is 'thinking' or 'speaking', we do nothing here.
+                    // The restart is correctly handled by the getAiReply function after the AI finishes speaking.
                 };
 
                 recognition.onerror = (event) => {
                     console.error("Speech recognition error:", event.error);
-                    if (event.error === 'no-speech') {
-                       // Don't do anything, just let it time out and onend will handle restart if needed.
-                    } else {
-                       setStatus('idle');
+                    // The 'no-speech' error is common if the user is silent. The onend event will
+                    // handle the restart, so we don't need to do much here.
+                    if (event.error !== 'no-speech' && event.error !== 'aborted') {
+                        setStatus('idle');
                     }
                 };
                 
                 recognition.onresult = (event) => {
                     const transcript = event.results[event.results.length - 1][0].transcript.trim();
 
-                    // --- KEY CHANGE 5: Stop recognition while we process and get a reply ---
-                    // This prevents it from listening to the AI's response.
-                    recognition.stop();
-                    
-                    setConversation(prevConversation => {
-                        const updatedConversation = [...prevConversation, { role: 'user', text: transcript }];
-                        getAiReply(updatedConversation); // getAiReply will restart recognition if needed
-                        return updatedConversation;
-                    });
-                };
-
-                recognitionRef.current = recognition;
-                
-                // Cleanup function to stop recognition if the component unmounts
-                return () => {
-                    if (recognitionRef.current) {
-                        recognitionRef.current.stop();
+                    if(transcript) {
+                        // Stop recognition temporarily while we process and get a reply.
+                        // This prevents it from listening to the AI's response.
+                        recognition.stop();
+                        
+                        setConversation(prevConversation => {
+                            const updatedConversation = [...prevConversation, { role: 'user', text: transcript }];
+                            getAiReply(updatedConversation); // This function will restart recognition when it's done.
+                            return updatedConversation;
+                        });
                     }
                 };
-            }, [isListeningActive]); // Rerun effect parts if isListeningActive changes.
 
-            // This effect warms up the speech synthesis engine.
+                return () => {
+                    recognition.onstart = null;
+                    recognition.onend = null;
+                    recognition.onerror = null;
+                    recognition.onresult = null;
+                };
+            // This useEffect now depends on 'status' to ensure the 'onend' handler always has the latest state.
+            }, [isListeningActive, status]);
+
+
             useEffect(() => {
                 const warmUp = () => window.speechSynthesis.getVoices();
                 if (window.speechSynthesis.onvoiceschanged !== undefined) {
@@ -217,7 +210,6 @@
                         <h2 className="text-xl font-semibold text-center text-gray-700 mb-2">Health Assistant</h2>
                         <p className="text-center text-gray-500 mb-6">Your AI Voice Assistant</p>
                         
-                        {/* --- KEY CHANGE 6: Added a ref to the container for scrolling --- */}
                         <div className="p-4 bg-gray-100 rounded-md h-[300px] mb-4 overflow-y-auto flex flex-col gap-2">
                             {conversation.map((turn, index) => (
                                 <div key={index} className={`p-3 rounded-lg max-w-[85%] ${turn.role === 'user' ? 'bg-gray-200 self-end' : 'bg-blue-100 self-start'}`}>
@@ -246,6 +238,3 @@
         root.render(<App />);
 
     </script>
-
-</body>
-</html>
