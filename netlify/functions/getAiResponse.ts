@@ -1,5 +1,5 @@
 // FILE: netlify/functions/getAiResponse.ts
-// This version includes conversation history and improved date handling instructions.
+// This version includes dynamic date generation and robust error handling for tool calls.
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
@@ -10,17 +10,6 @@ const headers = {
   'Access-Control-Allow-Headers': 'Content-Type',
   'Content-Type': 'application/json'
 };
-
-const systemPrompt = `
-You are Sahay, a friendly and efficient AI medical appointment assistant for Prudence Hospitals.
-Your primary goal is to help users book, cancel, or reschedule appointments using your tools.
-- You are aware that the current date is August 7, 2025.
-- Be flexible with date and time formats. A user might say "next Friday" or "tomorrow at 5pm". You must interpret this and convert it to the required YYYY-MM-DD and HH:MM format for your tools.
-- Do not repeatedly ask for a specific format. Instead, ask clarifying questions if you are unsure. For example, if a user says "the 15th," ask "Which month for the 15th?".
-- Gather all necessary information (like patient name, doctor specialty, date, and time) through conversation before calling a tool.
-- After a successful action, confirm the details with the user.
-- Do not provide medical advice.
-`;
 
 const handler: Handler = async (event: HandlerEvent) => {
     if (event.httpMethod === 'OPTIONS') {
@@ -41,11 +30,24 @@ const handler: Handler = async (event: HandlerEvent) => {
         return { statusCode: 400, headers, body: JSON.stringify({ error: "Invalid request body." }) };
     }
     
-    // --- UPDATED: Get the history from the request body ---
     const { history } = body;
     if (!history || !Array.isArray(history) || history.length === 0) {
         return { statusCode: 400, headers, body: JSON.stringify({ error: "No history provided." }) };
     }
+    
+    // --- FIX 1: Dynamically generate the current date ---
+    const currentDate = new Date().toLocaleDateString('en-CA'); // Gets date in YYYY-MM-DD format
+
+    const systemPrompt = `
+    You are Sahay, a friendly and efficient AI medical appointment assistant for Prudence Hospitals.
+    Your primary goal is to help users book, cancel, or reschedule appointments using your tools.
+    - You are aware that the current date is ${currentDate}.
+    - Be flexible with date and time formats. A user might say "next Friday" or "tomorrow at 5pm". You must interpret this and convert it to the required YYYY-MM-DD and HH:MM format for your tools.
+    - Do not repeatedly ask for a specific format. Instead, ask clarifying questions if you are unsure. For example, if a user says "the 15th," ask "Which month for the 15th?".
+    - Gather all necessary information (like patient name, doctor specialty, date, and time) through conversation before calling a tool.
+    - After a successful action, confirm the details with the user.
+    - Do not provide medical advice.
+    `;
 
     try {
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -83,17 +85,14 @@ const handler: Handler = async (event: HandlerEvent) => {
             }],
         }); 
         
-        // --- UPDATED: Start the chat with the full conversation history ---
         const chat = model.startChat({
             history: [
                 { role: "user", parts: [{ text: systemPrompt }] },
                 { role: "model", parts: [{ text: "Understood. I am Sahay, an AI assistant for Prudence Hospitals. How can I assist?" }] },
-                // Spread the rest of the conversation history
-                ...history.slice(0, -1) // Send all but the most recent user message
+                ...history.slice(0, -1)
             ]
         });
 
-        // Get the latest user message to send
         const latestUserMessage = history[history.length - 1].parts[0].text;
 
         const result = await chat.sendMessage(latestUserMessage);
@@ -105,6 +104,7 @@ const handler: Handler = async (event: HandlerEvent) => {
             let toolResult;
             let toolUrl;
 
+            // Route to the correct tool based on the function call name
             if (call.name === 'getDoctorDetails') {
                 toolUrl = `${event.headers.host}/.netlify/functions/getDoctorDetails`;
             } else if (call.name === 'bookAppointment') {
@@ -121,16 +121,33 @@ const handler: Handler = async (event: HandlerEvent) => {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(call.args),
                 });
-                toolResult = await toolResponse.json();
+
+                // --- FIX 2: Better error handling for the tool call ---
+                if (!toolResponse.ok) {
+                    // The tool call failed.
+                    const errorBody = await toolResponse.text();
+                    console.error(`Tool call to ${call.name} failed with status ${toolResponse.status}: ${errorBody}`);
+                    toolResult = { 
+                        error: `Tool execution failed with status: ${toolResponse.status}`, 
+                        details: errorBody 
+                    };
+                } else {
+                    // The tool call was successful.
+                    toolResult = await toolResponse.json();
+                }
+            } else {
+                toolResult = { error: "Tool not found" };
             }
 
+            // Send the tool's result back to the AI
             const result2 = await chat.sendMessage([
-                { functionResponse: { name: call.name, response: toolResult || { error: "Tool not found" } } }
+                { functionResponse: { name: call.name, response: toolResult } }
             ]);
             const finalResponse = result2.response.text();
             return { statusCode: 200, headers, body: JSON.stringify({ reply: finalResponse }) };
         }
 
+        // If no tool was called, just return the AI's text response
         const text = response.text();
         return { statusCode: 200, headers, body: JSON.stringify({ reply: text }) };
 
