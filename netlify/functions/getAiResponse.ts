@@ -1,5 +1,5 @@
 // FILE: netlify/functions/getAiResponse.ts
-// This version includes dynamic date generation and robust error handling for tool calls.
+// V2: Implements a smarter conversational flow to find doctors by specialty before booking.
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
@@ -35,17 +35,25 @@ const handler: Handler = async (event: HandlerEvent) => {
         return { statusCode: 400, headers, body: JSON.stringify({ error: "No history provided." }) };
     }
     
-    // --- FIX 1: Dynamically generate the current date ---
     const currentDate = new Date().toLocaleDateString('en-CA'); // Gets date in YYYY-MM-DD format
 
+    // --- UPDATED SYSTEM PROMPT ---
     const systemPrompt = `
     You are Sahay, a friendly and efficient AI medical appointment assistant for Prudence Hospitals.
-    Your primary goal is to help users book, cancel, or reschedule appointments using your tools.
+
+    **Your primary goal is to help users book, cancel, or reschedule appointments.**
+
+    **Core booking workflow:**
+    1.  When a user wants to book an appointment and provides a specialty (e.g., "radiology"), your FIRST step is to use the 'getDoctorDetails' tool with the specialty and desired date to find available doctors.
+    2.  Present the list of available doctor names to the user.
+    3.  Once the user chooses a doctor, you will have the exact 'doctorName'.
+    4.  Only then should you call the 'bookAppointment' tool with the patient's name, the chosen doctor's name, date, and time.
+
+    **Other Instructions:**
     - You are aware that the current date is ${currentDate}.
-    - Be flexible with date and time formats. A user might say "next Friday" or "tomorrow at 5pm". You must interpret this and convert it to the required YYYY-MM-DD and HH:MM format for your tools.
-    - Do not repeatedly ask for a specific format. Instead, ask clarifying questions if you are unsure. For example, if a user says "the 15th," ask "Which month for the 15th?".
-    - Gather all necessary information (like patient name, doctor specialty, date, and time) through conversation before calling a tool.
-    - After a successful action, confirm the details with the user.
+    - Be flexible with date/time formats (e.g., "next Friday at 5pm").
+    - If a user provides a partial doctor's name (e.g., "Dr. Murty"), use the 'getDoctorDetails' tool to find the full name.
+    - After any successful action, confirm the final details with the user.
     - Do not provide medical advice.
     `;
 
@@ -55,14 +63,21 @@ const handler: Handler = async (event: HandlerEvent) => {
             model: "gemini-1.5-flash",
             tools: [{
                 functionDeclarations: [
+                    // --- UPDATED TOOL DEFINITION ---
                     {
                         name: "getDoctorDetails",
-                        description: "Get a list of available doctors and their specialties.",
-                        parameters: { type: "OBJECT", properties: { specialty: { type: "STRING" } } },
+                        description: "Get a list of doctors. Can filter by specialty and date to find available doctors.",
+                        parameters: { 
+                            type: "OBJECT", 
+                            properties: { 
+                                specialty: { type: "STRING", description: "The medical specialty to search for (e.g., 'Radiology', 'Cardiology')." },
+                                date: { type: "STRING", description: "The date to check for availability (YYYY-MM-DD)." } 
+                            } 
+                        },
                     },
                     {
                         name: "bookAppointment",
-                        description: "Books a medical appointment.",
+                        description: "Books a medical appointment once a specific doctor has been identified.",
                         parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, date: { type: "STRING" }, time: { type: "STRING" } }, required: ["doctorName", "patientName", "date", "time"] },
                     },
                     {
@@ -104,7 +119,6 @@ const handler: Handler = async (event: HandlerEvent) => {
             let toolResult;
             let toolUrl;
 
-            // Route to the correct tool based on the function call name
             if (call.name === 'getDoctorDetails') {
                 toolUrl = `${event.headers.host}/.netlify/functions/getDoctorDetails`;
             } else if (call.name === 'bookAppointment') {
@@ -122,9 +136,7 @@ const handler: Handler = async (event: HandlerEvent) => {
                     body: JSON.stringify(call.args),
                 });
 
-                // --- FIX 2: Better error handling for the tool call ---
                 if (!toolResponse.ok) {
-                    // The tool call failed.
                     const errorBody = await toolResponse.text();
                     console.error(`Tool call to ${call.name} failed with status ${toolResponse.status}: ${errorBody}`);
                     toolResult = { 
@@ -132,14 +144,12 @@ const handler: Handler = async (event: HandlerEvent) => {
                         details: errorBody 
                     };
                 } else {
-                    // The tool call was successful.
                     toolResult = await toolResponse.json();
                 }
             } else {
                 toolResult = { error: "Tool not found" };
             }
 
-            // Send the tool's result back to the AI
             const result2 = await chat.sendMessage([
                 { functionResponse: { name: call.name, response: toolResult } }
             ]);
@@ -147,7 +157,6 @@ const handler: Handler = async (event: HandlerEvent) => {
             return { statusCode: 200, headers, body: JSON.stringify({ reply: finalResponse }) };
         }
 
-        // If no tool was called, just return the AI's text response
         const text = response.text();
         return { statusCode: 200, headers, body: JSON.stringify({ reply: text }) };
 
