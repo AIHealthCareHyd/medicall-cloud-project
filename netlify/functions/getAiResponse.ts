@@ -1,5 +1,5 @@
 // FILE: netlify/functions/getAiResponse.ts
-// V2: Implements a smarter conversational flow to find doctors by specialty before booking.
+// V3: Adds strict anti-hallucination rules and improved contextual memory.
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
@@ -37,11 +37,9 @@ const handler: Handler = async (event: HandlerEvent) => {
     
     const currentDate = new Date().toLocaleDateString('en-CA'); // Gets date in YYYY-MM-DD format
 
-    // --- UPDATED SYSTEM PROMPT ---
+    // --- UPDATED SYSTEM PROMPT WITH STRICTER RULES ---
     const systemPrompt = `
-    You are Sahay, a friendly and efficient AI medical appointment assistant for Prudence Hospitals.
-
-    **Your primary goal is to help users book, cancel, or reschedule appointments.**
+    You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
 
     **Core booking workflow:**
     1.  When a user wants to book an appointment and provides a specialty (e.g., "radiology"), your FIRST step is to use the 'getDoctorDetails' tool with the specialty and desired date to find available doctors.
@@ -49,10 +47,13 @@ const handler: Handler = async (event: HandlerEvent) => {
     3.  Once the user chooses a doctor, you will have the exact 'doctorName'.
     4.  Only then should you call the 'bookAppointment' tool with the patient's name, the chosen doctor's name, date, and time.
 
+    **Critical Rules for Accuracy:**
+    - **No Hallucinations:** If a tool returns no results or an error, you MUST state that you could not find the information. DO NOT invent information or suggest alternatives that were not provided by the tool. For example, if you can't find an appointment for 'Ashwini', you must not suggest one exists for 'Rashmi'.
+    - **Contextual Memory:** Pay close attention to the immediate conversation history. If you have just identified a full doctor or patient name from a tool, you MUST use that exact information in subsequent steps. Do not get confused by partial names in the next user turn.
+    - **Fuzzy Name Resolution:** If a user provides a partial doctor's name (e.g., "Dr. Murthy" or "Dr. Murti"), your first step is to use the 'getDoctorDetails' tool to find the full, correct name. Confirm the correct doctor with the user before proceeding with any action like booking or cancellation.
+
     **Other Instructions:**
     - You are aware that the current date is ${currentDate}.
-    - Be flexible with date/time formats (e.g., "next Friday at 5pm").
-    - If a user provides a partial doctor's name (e.g., "Dr. Murty"), use the 'getDoctorDetails' tool to find the full name.
     - After any successful action, confirm the final details with the user.
     - Do not provide medical advice.
     `;
@@ -63,14 +64,14 @@ const handler: Handler = async (event: HandlerEvent) => {
             model: "gemini-1.5-flash",
             tools: [{
                 functionDeclarations: [
-                    // --- UPDATED TOOL DEFINITION ---
                     {
                         name: "getDoctorDetails",
-                        description: "Get a list of doctors. Can filter by specialty and date to find available doctors.",
+                        description: "Use this to find the full name of a doctor from a partial name, or to get a list of doctors. Can filter by specialty and date.",
                         parameters: { 
                             type: "OBJECT", 
                             properties: { 
-                                specialty: { type: "STRING", description: "The medical specialty to search for (e.g., 'Radiology', 'Cardiology')." },
+                                doctorName: { type: "STRING", description: "A partial or full name of the doctor to search for."},
+                                specialty: { type: "STRING", description: "The medical specialty to search for (e.g., 'Radiology')." },
                                 date: { type: "STRING", description: "The date to check for availability (YYYY-MM-DD)." } 
                             } 
                         },
