@@ -1,5 +1,5 @@
 // FILE: netlify/functions/getAiResponse.ts
-// V4: Implements general availability queries to prevent conversational loops.
+// V5: Implements a unified, procedural workflow and adds a tool for listing all specialties.
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
@@ -37,27 +37,32 @@ const handler: Handler = async (event: HandlerEvent) => {
     
     const currentDate = new Date().toLocaleDateString('en-CA'); // Gets date in YYYY-MM-DD format
 
-    // --- UPDATED SYSTEM PROMPT WITH GENERAL QUERY HANDLING ---
+    // --- UPDATED SYSTEM PROMPT WITH A UNIFIED, PROCEDURAL WORKFLOW ---
     const systemPrompt = `
     You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
 
-    **Workflow for General Availability:**
-    - If a user asks a general question about when doctors of a certain specialty are available (e.g., "when are cardiologists free?"), you MUST use the 'getDoctorDetails' tool with ONLY the 'specialty' parameter. The tool will return a list of doctors and their next available dates. Present this information to the user.
+    **Primary Directive: Follow this procedure step-by-step.**
 
-    **Workflow for Specific Booking:**
-    1.  When a user provides a specialty AND a specific date, use 'getDoctorDetails' with both parameters to find available doctors on that day.
-    2.  Present the list of available doctor names to the user.
-    3.  Once the user chooses a doctor, you will have the exact 'doctorName'.
-    4.  Only then should you call the 'bookAppointment' tool.
+    1.  **Analyze the User's Request:**
+        - If the user asks for a list of all available specialties, your ONLY action is to use the 'getAllSpecialties' tool and present the list.
+        - If the user asks to book an appointment or check availability for a specialty:
+            - **Do they provide a specific date?**
+                - **NO:** Your first action MUST be to use the 'getDoctorDetails' tool with ONLY the 'specialty' parameter. Present the returned list of doctors and their next available dates to help the user choose.
+                - **YES:** Use the 'getDoctorDetails' tool with BOTH 'specialty' and 'date' to find available doctors for that specific day.
+    
+    2.  **Confirm Doctor with User:** After using 'getDoctorDetails', present the list of available doctors to the user. Once the user chooses one, you have the exact 'doctorName'.
+
+    3.  **Execute Final Action:**
+        - For booking, now that you have all the details (patientName, doctorName, date, time), call the 'bookAppointment' tool.
+        - For cancellation or rescheduling, proceed with the appropriate tool.
 
     **Critical Rules for Accuracy:**
     - **No Hallucinations:** If a tool returns no results, you MUST state that you could not find the information. DO NOT invent information.
     - **Contextual Memory:** If you have just identified a full doctor or patient name, you MUST use that exact information in subsequent steps.
-    - **Fuzzy Name Resolution:** If a user provides a partial doctor's name (e.g., "Dr. Murthy"), use 'getDoctorDetails' to find the full, correct name. Confirm with the user before proceeding.
+    - **Fuzzy Name Resolution:** If a user provides a partial doctor's name (e.g., "Dr. Murthy"), use 'getDoctorDetails' with the 'doctorName' parameter to find the full, correct name.
 
     **Other Instructions:**
     - You are aware that the current date is ${currentDate}.
-    - After any successful action, confirm the final details with the user.
     - Do not provide medical advice.
     `;
 
@@ -67,9 +72,15 @@ const handler: Handler = async (event: HandlerEvent) => {
             model: "gemini-1.5-flash",
             tools: [{
                 functionDeclarations: [
+                    // --- NEW TOOL ADDED ---
+                    {
+                        name: "getAllSpecialties",
+                        description: "Gets a list of all medical specialties available at the hospital.",
+                        parameters: { type: "OBJECT", properties: {} }, // No parameters
+                    },
                     {
                         name: "getDoctorDetails",
-                        description: "Finds doctors. Use with only 'specialty' for general availability. Use with 'specialty' and 'date' for availability on a specific day. Use with 'doctorName' to resolve partial names.",
+                        description: "Finds doctors. Use with only 'specialty' for general availability. Use with 'specialty' and 'date' for a specific day. Use with 'doctorName' to resolve partial names.",
                         parameters: { 
                             type: "OBJECT", 
                             properties: { 
@@ -123,7 +134,10 @@ const handler: Handler = async (event: HandlerEvent) => {
             let toolResult;
             let toolUrl;
 
-            if (call.name === 'getDoctorDetails') {
+            // --- ROUTING LOGIC UPDATED FOR NEW TOOL ---
+            if (call.name === 'getAllSpecialties') {
+                toolUrl = `${event.headers.host}/.netlify/functions/getAllSpecialties`;
+            } else if (call.name === 'getDoctorDetails') {
                 toolUrl = `${event.headers.host}/.netlify/functions/getDoctorDetails`;
             } else if (call.name === 'bookAppointment') {
                 toolUrl = `${event.headers.host}/.netlify/functions/bookAppointment`;
