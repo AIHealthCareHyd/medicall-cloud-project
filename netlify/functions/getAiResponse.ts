@@ -1,5 +1,5 @@
 // FILE: netlify/functions/getAiResponse.ts
-// V3: Adds strict anti-hallucination rules and improved contextual memory.
+// V4: Implements general availability queries to prevent conversational loops.
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
@@ -37,20 +37,23 @@ const handler: Handler = async (event: HandlerEvent) => {
     
     const currentDate = new Date().toLocaleDateString('en-CA'); // Gets date in YYYY-MM-DD format
 
-    // --- UPDATED SYSTEM PROMPT WITH STRICTER RULES ---
+    // --- UPDATED SYSTEM PROMPT WITH GENERAL QUERY HANDLING ---
     const systemPrompt = `
     You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
 
-    **Core booking workflow:**
-    1.  When a user wants to book an appointment and provides a specialty (e.g., "radiology"), your FIRST step is to use the 'getDoctorDetails' tool with the specialty and desired date to find available doctors.
+    **Workflow for General Availability:**
+    - If a user asks a general question about when doctors of a certain specialty are available (e.g., "when are cardiologists free?"), you MUST use the 'getDoctorDetails' tool with ONLY the 'specialty' parameter. The tool will return a list of doctors and their next available dates. Present this information to the user.
+
+    **Workflow for Specific Booking:**
+    1.  When a user provides a specialty AND a specific date, use 'getDoctorDetails' with both parameters to find available doctors on that day.
     2.  Present the list of available doctor names to the user.
     3.  Once the user chooses a doctor, you will have the exact 'doctorName'.
-    4.  Only then should you call the 'bookAppointment' tool with the patient's name, the chosen doctor's name, date, and time.
+    4.  Only then should you call the 'bookAppointment' tool.
 
     **Critical Rules for Accuracy:**
-    - **No Hallucinations:** If a tool returns no results or an error, you MUST state that you could not find the information. DO NOT invent information or suggest alternatives that were not provided by the tool. For example, if you can't find an appointment for 'Ashwini', you must not suggest one exists for 'Rashmi'.
-    - **Contextual Memory:** Pay close attention to the immediate conversation history. If you have just identified a full doctor or patient name from a tool, you MUST use that exact information in subsequent steps. Do not get confused by partial names in the next user turn.
-    - **Fuzzy Name Resolution:** If a user provides a partial doctor's name (e.g., "Dr. Murthy" or "Dr. Murti"), your first step is to use the 'getDoctorDetails' tool to find the full, correct name. Confirm the correct doctor with the user before proceeding with any action like booking or cancellation.
+    - **No Hallucinations:** If a tool returns no results, you MUST state that you could not find the information. DO NOT invent information.
+    - **Contextual Memory:** If you have just identified a full doctor or patient name, you MUST use that exact information in subsequent steps.
+    - **Fuzzy Name Resolution:** If a user provides a partial doctor's name (e.g., "Dr. Murthy"), use 'getDoctorDetails' to find the full, correct name. Confirm with the user before proceeding.
 
     **Other Instructions:**
     - You are aware that the current date is ${currentDate}.
@@ -66,13 +69,13 @@ const handler: Handler = async (event: HandlerEvent) => {
                 functionDeclarations: [
                     {
                         name: "getDoctorDetails",
-                        description: "Use this to find the full name of a doctor from a partial name, or to get a list of doctors. Can filter by specialty and date.",
+                        description: "Finds doctors. Use with only 'specialty' for general availability. Use with 'specialty' and 'date' for availability on a specific day. Use with 'doctorName' to resolve partial names.",
                         parameters: { 
                             type: "OBJECT", 
                             properties: { 
                                 doctorName: { type: "STRING", description: "A partial or full name of the doctor to search for."},
                                 specialty: { type: "STRING", description: "The medical specialty to search for (e.g., 'Radiology')." },
-                                date: { type: "STRING", description: "The date to check for availability (YYYY-MM-DD)." } 
+                                date: { type: "STRING", description: "Optional. The date to check for availability (YYYY-MM-DD)." } 
                             } 
                         },
                     },
