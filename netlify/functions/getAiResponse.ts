@@ -58,8 +58,8 @@ const handler: Handler = async (event: HandlerEvent) => {
 
     3.  Execute Final Action:
         - For booking, now that you have all the details, call the 'bookAppointment' tool.
-        - For cancellation or rescheduling, proceed with the appropriate tool.
-
+        - For cancellation, now that you have all the details, call the 'cancelAppointment' tool.
+        - For rescheduling, now that you have all the details, call the 'rescheduleAppointment' tool.
     Critical Rules for Accuracy:
     - No Hallucinations: If a tool returns no results, state that you could not find the information. DO NOT invent information.
     - Contextual Memory: If you have just identified a full doctor or patient name, use that exact information in subsequent steps.
