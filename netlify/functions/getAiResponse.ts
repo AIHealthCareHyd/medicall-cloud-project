@@ -1,5 +1,5 @@
 // FILE: netlify/functions/getAiResponse.ts
-// V6: Removes markdown from the system prompt to prevent it from leaking into the AI's responses.
+// V7: Adds a pre-check to validate specialty before gathering user info.
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
@@ -37,29 +37,33 @@ const handler: Handler = async (event: HandlerEvent) => {
     
     const currentDate = new Date().toLocaleDateString('en-CA'); // Gets date in YYYY-MM-DD format
 
-    // --- UPDATED SYSTEM PROMPT: REMOVED ALL MARKDOWN FORMATTING ---
+    // --- UPDATED SYSTEM PROMPT WITH PRE-CHECK LOGIC ---
     const systemPrompt = `
     You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
 
     Primary Directive: Follow this procedure step-by-step.
 
+    0.  Pre-check Specialty: When a user asks to book an appointment with a specialty (e.g., "Cardiology"), your VERY FIRST action is to use the 'getDoctorDetails' tool with that specialty.
+        - If the tool returns an empty list, you MUST immediately inform the user that this specialty is not available and stop the booking process.
+        - If the tool returns doctors, then and ONLY then should you proceed to ask for the date and other information.
+
     1.  Analyze the User's Request:
-        - If the user asks for a list of all available specialties, your ONLY action is to use the 'getAllSpecialties' tool and present the list.
-        - If the user asks to book an appointment or check availability for a specialty:
-            - Do they provide a specific date?
-                - NO: Your first action MUST be to use the 'getDoctorDetails' tool with ONLY the 'specialty' parameter. Present the returned list of doctors and their next available dates to help the user choose.
-                - YES: Use the 'getDoctorDetails' tool with BOTH 'specialty' and 'date' to find available doctors for that specific day.
+        - If the user asks for a list of all available specialties, use the 'getAllSpecialties' tool.
+        - If the user asks to list all doctors, use 'getDoctorDetails' without any parameters.
+        - For booking, if the specialty is valid (from the pre-check), determine if the user provided a specific date.
+            - NO: Present the list of doctors from the pre-check and their next available dates to help the user choose.
+            - YES: Use 'getDoctorDetails' again with BOTH 'specialty' and 'date' to find available doctors for that specific day.
     
     2.  Confirm Doctor with User: After using 'getDoctorDetails', present the list of available doctors to the user. Once the user chooses one, you have the exact 'doctorName'.
 
     3.  Execute Final Action:
-        - For booking, now that you have all the details (patientName, doctorName, date, time), call the 'bookAppointment' tool.
+        - For booking, now that you have all the details, call the 'bookAppointment' tool.
         - For cancellation or rescheduling, proceed with the appropriate tool.
 
     Critical Rules for Accuracy:
-    - No Hallucinations: If a tool returns no results, you MUST state that you could not find the information. DO NOT invent information.
-    - Contextual Memory: If you have just identified a full doctor or patient name, you MUST use that exact information in subsequent steps.
-    - Fuzzy Name Resolution: If a user provides a partial doctor's name (e.g., "Dr. Murthy"), use 'getDoctorDetails' with the 'doctorName' parameter to find the full, correct name.
+    - No Hallucinations: If a tool returns no results, state that you could not find the information. DO NOT invent information.
+    - Contextual Memory: If you have just identified a full doctor or patient name, use that exact information in subsequent steps.
+    - Fuzzy Name Resolution: If a user provides a partial doctor's name, use 'getDoctorDetails' with the 'doctorName' parameter to find the full name.
 
     Other Instructions:
     - You are aware that the current date is ${currentDate}.
@@ -75,11 +79,11 @@ const handler: Handler = async (event: HandlerEvent) => {
                     {
                         name: "getAllSpecialties",
                         description: "Gets a list of all medical specialties available at the hospital.",
-                        parameters: { type: "OBJECT", properties: {} }, // No parameters
+                        parameters: { type: "OBJECT", properties: {} },
                     },
                     {
                         name: "getDoctorDetails",
-                        description: "Finds doctors. Use with only 'specialty' for general availability. Use with 'specialty' and 'date' for a specific day. Use with 'doctorName' to resolve partial names.",
+                        description: "Finds doctors. Use with only 'specialty' for general availability or to validate a specialty. Use with 'specialty' and 'date' for a specific day. Use with 'doctorName' to resolve partial names. Use with no parameters to list all doctors.",
                         parameters: { 
                             type: "OBJECT", 
                             properties: { 
