@@ -8,13 +8,14 @@
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Icon library for send/mic icons -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
 </head>
 <body class="bg-gray-100">
 
     <div id="root"></div>
 
-
-        <script type="text/babel">
+    <script type="text/babel">
 
         const { useState, useEffect, useRef } = React;
 
@@ -24,6 +25,8 @@
             ]);
             const [status, setStatus] = useState('idle'); // idle, listening, thinking, speaking
             const [isListeningActive, setIsListeningActive] = useState(false);
+            // --- NEW STATE for text input ---
+            const [inputText, setInputText] = useState('');
             
             const recognitionRef = useRef(null);
             const conversationEndRef = useRef(null);
@@ -103,6 +106,18 @@
                 }
             };
 
+            // --- NEW FUNCTION to handle typed text submission ---
+            const handleTextSubmit = (e) => {
+                e.preventDefault();
+                const trimmedInput = inputText.trim();
+                if (!trimmedInput) return;
+
+                const newConversation = [...conversation, { role: 'user', text: trimmedInput }];
+                setConversation(newConversation);
+                setInputText('');
+                getAiReply(newConversation);
+            };
+
             const toggleListening = () => {
                 const currentlyActive = !isListeningActive;
                 setIsListeningActive(currentlyActive);
@@ -118,11 +133,10 @@
                 }
             };
 
-            // --- MAIN FIX IS HERE ---
             useEffect(() => {
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 if (!SpeechRecognition) {
-                    alert("Sorry, your browser doesn't support speech recognition.");
+                    console.warn("Speech recognition not supported.");
                     return;
                 }
 
@@ -134,15 +148,9 @@
                 
                 const recognition = recognitionRef.current;
 
-                recognition.onstart = () => {
-                    setStatus('listening');
-                };
+                recognition.onstart = () => setStatus('listening');
 
-                // UPDATED LOGIC: This handler is now the key to making the session robust.
                 recognition.onend = () => {
-                    // Check if we should be listening. If the master toggle is on, but we are not currently
-                    // processing a request (thinking/speaking), it means recognition stopped on its own
-                    // due to a browser timeout. We should restart it to keep the session alive.
                     if (isListeningActive && status !== 'thinking' && status !== 'speaking') {
                         console.log("Recognition timed out, restarting...");
                         try {
@@ -152,17 +160,12 @@
                             setStatus('idle');
                         }
                     } else if (!isListeningActive) {
-                        // This handles the case where the user manually clicked "Stop Listening".
                         setStatus('idle');
                     }
-                    // If isListeningActive is true BUT status is 'thinking' or 'speaking', we do nothing here.
-                    // The restart is correctly handled by the getAiReply function after the AI finishes speaking.
                 };
 
                 recognition.onerror = (event) => {
                     console.error("Speech recognition error:", event.error);
-                    // The 'no-speech' error is common if the user is silent. The onend event will
-                    // handle the restart, so we don't need to do much here.
                     if (event.error !== 'no-speech' && event.error !== 'aborted') {
                         setStatus('idle');
                     }
@@ -172,13 +175,11 @@
                     const transcript = event.results[event.results.length - 1][0].transcript.trim();
 
                     if(transcript) {
-                        // Stop recognition temporarily while we process and get a reply.
-                        // This prevents it from listening to the AI's response.
                         recognition.stop();
                         
                         setConversation(prevConversation => {
                             const updatedConversation = [...prevConversation, { role: 'user', text: transcript }];
-                            getAiReply(updatedConversation); // This function will restart recognition when it's done.
+                            getAiReply(updatedConversation);
                             return updatedConversation;
                         });
                     }
@@ -190,9 +191,7 @@
                     recognition.onerror = null;
                     recognition.onresult = null;
                 };
-            // This useEffect now depends on 'status' to ensure the 'onend' handler always has the latest state.
             }, [isListeningActive, status]);
-
 
             useEffect(() => {
                 const warmUp = () => window.speechSynthesis.getVoices();
@@ -203,46 +202,55 @@
                 return () => { window.speechSynthesis.onvoiceschanged = null; };
             }, []);
 
-            const getButtonTextAndStyle = () => {
-                if (isListeningActive) {
-                    if (status === 'thinking' || status === 'speaking') {
-                        return { text: status.charAt(0).toUpperCase() + status.slice(1) + '...', style: "bg-gray-400 cursor-not-allowed"};
-                    }
-                    return { text: 'Stop Listening', style: "bg-red-500 hover:bg-red-600" };
-                }
-                return { text: 'Talk to Sahay', style: "bg-orange-500 hover:bg-orange-600" };
-            };
-
-            const { text: buttonText, style: buttonStyle } = getButtonTextAndStyle();
-
+            // --- UPDATED JSX for chat layout ---
             return (
-                <div className="flex flex-col items-center justify-center min-h-screen text-gray-800 font-sans p-4 bg-gray-50">
-                    <div className="w-full max-w-md p-6 bg-white rounded-lg shadow-xl">
-                        <div className="text-center mb-4">
-                            <h1 className="text-3xl font-bold text-blue-900">PRUDENCE</h1>
-                            <p className="text-sm tracking-widest text-blue-800">HOSPITALS</p>
+                <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 font-sans p-4">
+                    <div className="w-full max-w-md h-[80vh] flex flex-col bg-white rounded-lg shadow-xl">
+                        <div className="text-center p-4 border-b">
+                            <h1 className="text-2xl font-bold text-blue-900">PRUDENCE HOSPITALS</h1>
+                            <p className="text-sm text-gray-500">AI Health Assistant</p>
                         </div>
                         
-                        <h2 className="text-xl font-semibold text-center text-gray-700 mb-2">Health Assistant</h2>
-                        <p className="text-center text-gray-500 mb-6">Your AI Voice Assistant</p>
-                        
-                        <div className="p-4 bg-gray-100 rounded-md h-[300px] mb-4 overflow-y-auto flex flex-col gap-2">
+                        <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3">
                             {conversation.map((turn, index) => (
-                                <div key={index} className={`p-3 rounded-lg max-w-[85%] ${turn.role === 'user' ? 'bg-gray-200 self-end' : 'bg-blue-100 self-start'}`}>
+                                <div key={index} className={`p-3 rounded-lg max-w-[85%] w-fit ${turn.role === 'user' ? 'bg-blue-500 text-white self-end' : 'bg-gray-200 text-gray-800 self-start'}`}>
                                     <p>{turn.text}</p>
                                 </div>
                             ))}
-                             <div ref={conversationEndRef} />
+                            <div ref={conversationEndRef} />
                         </div>
                         
-                        <div className="flex justify-center mt-4">
-                            <button
-                                onClick={toggleListening}
-                                disabled={isListeningActive && (status === 'thinking' || status === 'speaking')}
-                                className={`px-8 py-4 text-white font-bold rounded-full shadow-lg transition-all duration-300 disabled:cursor-not-allowed ${buttonStyle}`}
-                            >
-                                {buttonText}
-                            </button>
+                        <div className="p-4 border-t">
+                             { (status === 'thinking' || status === 'speaking' || status === 'listening') &&
+                                <p className="text-center text-sm text-gray-500 mb-2 italic">
+                                    {status === 'listening' ? 'Listening...' : status === 'thinking' ? 'Sahay is thinking...' : 'Sahay is speaking...'}
+                                </p>
+                             }
+                            <form onSubmit={handleTextSubmit} className="flex items-center gap-2">
+                                <input
+                                    type="text"
+                                    value={inputText}
+                                    onChange={(e) => setInputText(e.target.value)}
+                                    placeholder="Type your message..."
+                                    className="flex-1 p-3 border rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    disabled={status !== 'idle'}
+                                />
+                                <button
+                                    type="submit"
+                                    className="bg-blue-500 text-white rounded-full w-12 h-12 flex items-center justify-center hover:bg-blue-600 disabled:bg-gray-400"
+                                    disabled={status !== 'idle' || !inputText.trim()}
+                                >
+                                    <i className="fas fa-paper-plane"></i>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={toggleListening}
+                                    className={`${isListeningActive ? 'bg-red-500' : 'bg-green-500'} text-white rounded-full w-12 h-12 flex items-center justify-center hover:bg-opacity-90 disabled:bg-gray-400`}
+                                    disabled={status === 'thinking' || status === 'speaking'}
+                                >
+                                    <i className={`fas ${isListeningActive ? 'fa-stop' : 'fa-microphone'}`}></i>
+                                </button>
+                            </form>
                         </div>
                     </div>
                 </div>
@@ -254,3 +262,6 @@
         root.render(<App />);
 
     </script>
+
+</body>
+</html>
