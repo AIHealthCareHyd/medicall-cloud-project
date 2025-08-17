@@ -17,89 +17,121 @@
 
     <script type="text/babel">
 
+        // We're borrowing some tools from the React library to use in our app.
+        // - useState: Lets our app remember things (like the conversation history).
+        // - useEffect: Lets our app do something in response to a change (like scrolling when a new message appears).
+        // - useRef: Lets our app hold onto a specific element or value (like the microphone tool).
         const { useState, useEffect, useRef } = React;
 
+        // This is the main component for our entire application.
         function App() {
+            // 'useState' creates a piece of the app's memory.
+            // This one remembers the entire chat conversation, starting with the welcome message.
             const [conversation, setConversation] = useState([
                 { role: 'model', text: "Welcome to Prudence Hospitals. I'm Sahay, your AI assistant. How can I help you today?" }
             ]);
-            const [status, setStatus] = useState('idle'); // idle, listening, thinking, speaking
+            // This remembers the app's current status: 'idle', 'listening', 'thinking', or 'speaking'.
+            const [status, setStatus] = useState('idle');
+            // This remembers whether the microphone is currently supposed to be active.
             const [isListeningActive, setIsListeningActive] = useState(false);
             // --- NEW STATE for text input ---
+            // This remembers the text that the user is currently typing into the input box.
             const [inputText, setInputText] = useState('');
             
+            // 'useRef' is like creating a permanent bookmark to something.
+            // This bookmarks the speech recognition tool so we can control it.
             const recognitionRef = useRef(null);
+            // This bookmarks the very bottom of the chat window.
             const conversationEndRef = useRef(null);
 
+            // This is a simple function to scroll the chat window to the bottom.
             const scrollToBottom = () => {
                 conversationEndRef.current?.scrollIntoView({ behavior: "smooth" });
             };
 
+            // 'useEffect' sets up a rule: "Whenever the 'conversation' memory changes..."
             useEffect(() => {
+                // "...run the scrollToBottom function." This keeps the latest message in view.
                 scrollToBottom();
             }, [conversation]);
 
+            // This function takes text and uses the browser's built-in voice to speak it out loud.
             const speak = (text) => {
-                window.speechSynthesis.cancel();
+                window.speechSynthesis.cancel(); // Stop any previous speaking.
                 return new Promise((resolve, reject) => {
-                    setStatus('speaking');
+                    setStatus('speaking'); // Update the app's status.
                     const utterance = new SpeechSynthesisUtterance(text);
                     const voices = window.speechSynthesis.getVoices();
                     if (voices.length > 0) {
+                        // We try to find a nice-sounding female voice to use.
                         const femaleVoice = voices.find(voice => voice.lang.startsWith('en') && (voice.gender === 'female' || voice.name.includes('Female')));
                         if (femaleVoice) utterance.voice = femaleVoice;
                     }
+                    // When the speaking is finished, we set the status back to 'idle'.
                     utterance.onend = () => {
                         setStatus('idle');
                         resolve();
                     };
+                    // If there's an error during speech, we handle it.
                     utterance.onerror = (event) => {
                         console.error("SpeechSynthesis Error", event);
                         setStatus('idle');
                         reject(event.error);
                     };
+                    // Finally, tell the browser to speak.
                     window.speechSynthesis.speak(utterance);
                 });
             };
             
+            // This function is the bridge to our AI "brain" on the server.
             const getAiReply = async (currentConversation) => {
-                setStatus('thinking');
+                setStatus('thinking'); // Let the user know the AI is working.
                 
+                // We format the conversation history into the specific structure the AI API expects.
                 const historyForApi = currentConversation.map(turn => ({
                     role: turn.role,
                     parts: [{ text: turn.text }]
                 }));
 
+                // This is the address of our main AI function ('getAiResponse.ts').
                 const functionUrl = 'https://sahayhealth.netlify.app/.netlify/functions/getAiResponse';
 
                 try {
+                    // We send the conversation history to our AI function.
                     const response = await fetch(functionUrl, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ history: historyForApi }),
                     });
 
+                    // If the server responds with an error, we need to handle it.
                     if (!response.ok) {
                         const errorText = await response.text();
                         throw new Error(`Network error: ${response.status} - ${errorText}`);
                     }
 
+                    // We read the AI's reply from the response.
                     const data = await response.json();
                     const aiReplyText = data.reply || "Sorry, I had trouble understanding that.";
                     
+                    // Add the AI's reply to our conversation history.
                     setConversation(prev => [...prev, { role: 'model', text: aiReplyText }]);
                     
+                    // Speak the AI's reply out loud.
                     await speak(aiReplyText);
                     
+                    // If the microphone was on before, turn it back on to listen for the user's next response.
                     if (isListeningActive && recognitionRef.current) {
                         recognitionRef.current.start();
                     }
 
                 } catch (error) {
+                    // If anything goes wrong with fetching the AI reply, we show an error message.
                     console.error("Error fetching AI response:", error);
                     const errorText = `There was an error: ${error.message}`;
                     setConversation(prev => [...prev, { role: 'model', text: errorText }]);
                     await speak(errorText).catch(e => console.error("Error speaking the error message:", e));
+                    // Try to turn the microphone back on even after an error.
                     if (isListeningActive && recognitionRef.current) {
                         recognitionRef.current.start();
                     }
@@ -107,50 +139,62 @@
             };
 
             // --- NEW FUNCTION to handle typed text submission ---
+            // This function runs when the user types a message and hits Enter or the Send button.
             const handleTextSubmit = (e) => {
-                e.preventDefault();
-                const trimmedInput = inputText.trim();
-                if (!trimmedInput) return;
+                e.preventDefault(); // Prevents the webpage from reloading on form submission.
+                const trimmedInput = inputText.trim(); // Remove any extra spaces.
+                if (!trimmedInput) return; // If the message is empty, do nothing.
 
+                // Add the user's new message to the conversation history.
                 const newConversation = [...conversation, { role: 'user', text: trimmedInput }];
                 setConversation(newConversation);
-                setInputText('');
-                getAiReply(newConversation);
+                setInputText(''); // Clear the input box.
+                getAiReply(newConversation); // Send the updated conversation to the AI.
             };
 
+            // This function toggles the microphone on and off.
             const toggleListening = () => {
                 const currentlyActive = !isListeningActive;
-                setIsListeningActive(currentlyActive);
+                setIsListeningActive(currentlyActive); // Flip the listening state.
 
                 if (currentlyActive) {
+                    // If we are turning the mic ON...
                     if (recognitionRef.current) {
-                        recognitionRef.current.start();
+                        recognitionRef.current.start(); // ...start listening.
                     }
                 } else {
+                    // If we are turning the mic OFF...
                     if (recognitionRef.current) {
-                        recognitionRef.current.stop();
+                        recognitionRef.current.stop(); // ...stop listening.
                     }
                 }
             };
 
+            // This 'useEffect' sets up the browser's speech recognition capabilities.
             useEffect(() => {
+                // Check if the user's browser even supports speech recognition.
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 if (!SpeechRecognition) {
                     console.warn("Speech recognition not supported.");
                     return;
                 }
 
+                // If we haven't created our recognition tool yet, create it now.
                 if (!recognitionRef.current) {
                     recognitionRef.current = new SpeechRecognition();
-                    recognitionRef.current.continuous = true;
-                    recognitionRef.current.interimResults = false;
+                    recognitionRef.current.continuous = true; // Keep listening even after pauses.
+                    recognitionRef.current.interimResults = false; // Only give us the final, complete transcript.
                 }
                 
                 const recognition = recognitionRef.current;
 
+                // When listening starts, update the status.
                 recognition.onstart = () => setStatus('listening');
 
+                // This handles what happens when listening stops.
                 recognition.onend = () => {
+                    // If the mic is supposed to be on and the AI isn't busy, restart listening automatically.
+                    // This handles cases where the browser times out the microphone.
                     if (isListeningActive && status !== 'thinking' && status !== 'speaking') {
                         console.log("Recognition timed out, restarting...");
                         try {
@@ -160,10 +204,12 @@
                             setStatus('idle');
                         }
                     } else if (!isListeningActive) {
+                        // If the user turned the mic off, just go back to idle.
                         setStatus('idle');
                     }
                 };
 
+                // Handle any errors from the speech recognition service.
                 recognition.onerror = (event) => {
                     console.error("Speech recognition error:", event.error);
                     if (event.error !== 'no-speech' && event.error !== 'aborted') {
@@ -171,28 +217,34 @@
                     }
                 };
                 
+                // This is the most important part: what happens when the browser hears something.
                 recognition.onresult = (event) => {
+                    // Get the text transcript of what the user said.
                     const transcript = event.results[event.results.length - 1][0].transcript.trim();
 
                     if(transcript) {
-                        recognition.stop();
+                        recognition.stop(); // Temporarily stop listening while the AI thinks.
                         
+                        // Use a special function form of setConversation to make sure we have the latest chat history.
                         setConversation(prevConversation => {
                             const updatedConversation = [...prevConversation, { role: 'user', text: transcript }];
-                            getAiReply(updatedConversation);
+                            getAiReply(updatedConversation); // Send the transcript to the AI.
                             return updatedConversation;
                         });
                     }
                 };
 
+                // This is a cleanup function. It removes the event listeners when the component is no longer on screen
+                // to prevent memory leaks.
                 return () => {
                     recognition.onstart = null;
                     recognition.onend = null;
                     recognition.onerror = null;
                     recognition.onresult = null;
                 };
-            }, [isListeningActive, status]);
+            }, [isListeningActive, status]); // This entire setup effect runs again if 'isListeningActive' or 'status' changes.
 
+            // A small effect to "warm up" the speech synthesis engine so it's ready to speak without delay.
             useEffect(() => {
                 const warmUp = () => window.speechSynthesis.getVoices();
                 if (window.speechSynthesis.onvoiceschanged !== undefined) {
@@ -203,29 +255,37 @@
             }, []);
 
             // --- UPDATED JSX for chat layout ---
+            // This is the visual structure of our app, written using JSX (which looks like HTML).
             return (
                 <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 font-sans p-4">
                     <div className="w-full max-w-md h-[80vh] flex flex-col bg-white rounded-lg shadow-xl">
+                        {/* The header section */}
                         <div className="text-center p-4 border-b">
                             <h1 className="text-2xl font-bold text-blue-900">PRUDENCE HOSPITALS</h1>
                             <p className="text-sm text-gray-500">AI Health Assistant</p>
                         </div>
                         
+                        {/* The main chat window where messages appear */}
                         <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3">
+                            {/* We loop through our 'conversation' memory and display each message. */}
                             {conversation.map((turn, index) => (
                                 <div key={index} className={`p-3 rounded-lg max-w-[85%] w-fit ${turn.role === 'user' ? 'bg-blue-500 text-white self-end' : 'bg-gray-200 text-gray-800 self-start'}`}>
                                     <p>{turn.text}</p>
                                 </div>
                             ))}
+                            {/* This is the invisible element we use as a bookmark to scroll to the bottom. */}
                             <div ref={conversationEndRef} />
                         </div>
                         
+                        {/* The bottom section with the input field and buttons */}
                         <div className="p-4 border-t">
+                             {/* This text appears to let the user know what the AI is doing. */}
                              { (status === 'thinking' || status === 'speaking' || status === 'listening') &&
                                 <p className="text-center text-sm text-gray-500 mb-2 italic">
                                     {status === 'listening' ? 'Listening...' : status === 'thinking' ? 'Sahay is thinking...' : 'Sahay is speaking...'}
                                 </p>
                              }
+                            {/* The form for typing and submitting messages. */}
                             <form onSubmit={handleTextSubmit} className="flex items-center gap-2">
                                 <input
                                     type="text"
@@ -257,6 +317,7 @@
             );
         }
 
+        // These final lines tell React to find the 'root' div in our HTML and render our 'App' component inside it.
         const container = document.getElementById('root');
         const root = ReactDOM.createRoot(container);
         root.render(<App />);

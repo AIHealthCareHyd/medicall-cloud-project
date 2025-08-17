@@ -38,9 +38,9 @@
                             <th class="w-1/4 text-left py-3 px-4 uppercase font-semibold text-sm">Date & Time</th>
                         </tr>
                     </thead>
+                    {/* The actual appointment data rows will be inserted here by our JavaScript code. */}
                     <tbody id="appointments-tbody" class="text-gray-700">
-                        <!-- Rows will be inserted here by JavaScript -->
-                    </tbody>
+                        </tbody>
                 </table>
             </div>
         </div>
@@ -48,11 +48,13 @@
 
     <script>
         // --- CONFIGURATION ---
-        // IMPORTANT: Replace these with your actual Supabase URL and Anon Key
+        // These are the public credentials for our Supabase database. They allow read-only access.
+        // This is like the public address and a guest pass for our database.
         const SUPABASE_URL = 'https://mmvcwsvulelcyexsldrq.supabase.co'; 
-        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1tdmN3c3Z1bGVsY3lleHNsZHJxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI4MDY2MTUsImV4cCI6MjA2ODM4MjYxNX0.UsXEVXWV_R6jlhss3t2TERRE1DUDhRvZDulf9LsS_eY'; // Found in your Supabase project's API settings
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1tdmN3c3Z1bGVsY3lleHNsZHJxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI4MDY2MTUsImV4cCI6MjA2ODM4MjYxNX0.UsXEVXWV_R6jlhss3t2TERRE1DUDhRvZDulf9LsS_eY';
 
         // --- UI ELEMENTS ---
+        // Here, we get references to the different parts of our webpage so we can control them (hide, show, update).
         const loadingDiv = document.getElementById('loading');
         const errorDiv = document.getElementById('error');
         const errorMessageSpan = document.getElementById('error-message');
@@ -60,14 +62,16 @@
         const tbody = document.getElementById('appointments-tbody');
         
         // --- MAIN LOGIC ---
-        // *** THIS IS THE CORRECTED LINE ***
-        // Initialize the Supabase client from the global 'supabase' object
+        // Here, we initialize the connection to the Supabase database using the credentials from above.
         const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+        // This is the main function that fetches the data and displays it on the page.
         async function fetchAndDisplayAppointments() {
             try {
-                // Fetch all appointments and related doctor details in one query
-                // The 'doctors(*)' part tells Supabase to join the tables for us
+                // This is the query to the database. It's a single, powerful request:
+                // "From the 'appointments' table, get the patient's name, date, and time.
+                //  Also, for each appointment, look up the related doctor in the 'doctors' table and get their name and specialty.
+                //  Finally, sort all the results by date, with the newest appointments first."
                 const { data: appointments, error } = await supabaseClient
                     .from('appointments')
                     .select(`
@@ -78,47 +82,57 @@
                     `)
                     .order('appointment_date', { ascending: false });
 
+                // If the database returns an error, we jump to the 'catch' block to handle it.
                 if (error) {
-                    throw error; // Let the catch block handle it
+                    throw error;
                 }
 
-                // Clear any existing rows
+                // Before adding new data, we clear any old rows that might be in the table.
                 tbody.innerHTML = '';
 
+                // If the database returned no appointments, we display a message saying so.
                 if (appointments.length === 0) {
                     tbody.innerHTML = '<tr><td colspan="4" class="text-center py-4">No appointments found.</td></tr>';
                 } else {
-                    // Populate the table with the fetched data
+                    // If we have appointments, we loop through each one to create a table row.
                     appointments.forEach(appt => {
                         const row = document.createElement('tr');
                         row.className = 'border-b border-gray-200 hover:bg-gray-100';
                         
+                        // We format the date and time to be more human-readable.
                         const formattedDate = new Date(appt.appointment_date).toLocaleDateString();
                         const formattedTime = appt.appointment_time.substring(0, 5);
 
+                        // We create the HTML for the table row with the appointment's data.
                         row.innerHTML = `
                             <td class="py-3 px-4">${appt.patient_name}</td>
                             <td class="py-3 px-4">${appt.doctors.name}</td>
                             <td class="py-3 px-4">${appt.doctors.specialty}</td>
                             <td class="py-3 px-4">${formattedDate} at ${formattedTime}</td>
                         `;
+                        // We add the newly created row to our table body.
                         tbody.appendChild(row);
                     });
                 }
 
-                // Show the table and hide the loader
+                // Once the data is ready, we hide the "Loading..." message...
                 loadingDiv.classList.add('hidden');
+                // ...and show the table with the appointment data.
                 tableContainer.classList.remove('hidden');
 
             } catch (err) {
+                // If any error occurred during the process...
                 console.error('Error fetching data:', err);
+                // ...we display the error message on the page.
                 errorMessageSpan.textContent = err.message;
+                // And we hide the loading message and show the error box.
                 loadingDiv.classList.add('hidden');
                 errorDiv.classList.remove('hidden');
             }
         }
 
-        // Run the function when the page loads
+        // This line tells the browser to run our 'fetchAndDisplayAppointments' function
+        // as soon as the webpage has finished loading.
         document.addEventListener('DOMContentLoaded', fetchAndDisplayAppointments);
     </script>
 
