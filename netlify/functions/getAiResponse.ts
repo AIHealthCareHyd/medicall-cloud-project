@@ -1,16 +1,23 @@
 // FILE: netlify/functions/getAiResponse.ts
+// This version has a heavily revised system prompt to improve conversation flow and date handling.
+
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 
+// Define common headers that will be sent with every response.
 const headers = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': '*', // Allows any website to access this function
   'Access-Control-Allow-Headers': 'Content-Type',
   'Content-Type': 'application/json'
 };
 
 const handler: Handler = async (event: HandlerEvent) => {
     if (event.httpMethod === 'OPTIONS') {
-        return { statusCode: 200, headers, body: JSON.stringify({ message: 'CORS preflight successful' }) };
+        return {
+            statusCode: 200,
+            headers,
+            body: JSON.stringify({ message: 'CORS preflight successful' })
+        };
     }
 
     if (!process.env.GEMINI_API_KEY) {
@@ -28,24 +35,27 @@ const handler: Handler = async (event: HandlerEvent) => {
         return { statusCode: 400, headers, body: JSON.stringify({ error: "No history provided." }) };
     }
     
-    const currentDate = new Date().toLocaleDateString('en-CA');
+    const currentDate = new Date().toLocaleDateString('en-CA'); // Gets date in YYYY-MM-DD format
 
+    // --- REVISED SYSTEM PROMPT ---
     const systemPrompt = `
     You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
-    Your primary job is to understand natural language and use your tools to manage appointments.
 
-    Most Important Rule: Be flexible with date/time formats. Interpret natural language like "next Friday at 5pm". You must convert this to 'YYYY-MM-DD' and 'HH:MM' before using any tool. NEVER repeatedly ask for a specific format.
+    **Most Important Rule:** Your primary job is to understand natural language. When a user gives you a date or time like "August 15th 2025", "next Tuesday at 5pm", or "10/10/25", you MUST interpret it and convert it to the required 'YYYY-MM-DD' and 'HH:MM' format for your tools. **NEVER repeatedly ask the user for a specific format.** If you are unsure, ask a clarifying question once (e.g., "Which month did you mean for the 15th?").
 
-    Booking Process:
-    1. First, identify the doctor or specialty the user wants.
-    2. Next, gather the patient's full name and 10-digit phone number.
-    3. Then, ask for the desired date and time.
-    4. Once you have all required information, confirm the details with the user before calling the 'bookAppointment' tool.
-    
-    Critical Rules:
+    **Primary Directive: Follow this procedure for booking an appointment.**
+    1.  **Gather Initial Info:** First, ask the user for the doctor or specialty they need.
+    2.  **Find Doctors:** Use the 'getDoctorDetails' tool with the specialty to see if any doctors are available. If not, inform the user. If doctors are available, list them.
+    3.  **Gather Patient Details:** Once a doctor is chosen, ask for the patient's full name and 10-digit phone number.
+    4.  **Gather Date & Time:** Ask for the desired date and time for the appointment.
+    5.  **Final Confirmation:** Before taking any action, you MUST repeat all the gathered details back to the user in a final confirmation message (Patient Name, Phone, Doctor Name, Date, Time).
+    6.  **Execute Booking:** Only after the user confirms that all details are correct, you must call the 'bookAppointment' tool with the complete, confirmed information.
+
+    **Other Critical Rules:**
     - If a user asks for available specialties, use the 'getAllSpecialties' tool.
     - You are aware that the current date is ${currentDate}.
     - Do not provide medical advice.
+    - Always use the conversation history to remember details the user has already provided.
     `;
 
     try {
@@ -72,6 +82,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         });
 
         const latestUserMessage = history[history.length - 1].parts[0].text;
+
         const result = await chat.sendMessage(latestUserMessage);
         const response = result.response;
         const functionCalls = response.functionCalls();
@@ -104,3 +115,4 @@ const handler: Handler = async (event: HandlerEvent) => {
 };
 
 export { handler };
+
