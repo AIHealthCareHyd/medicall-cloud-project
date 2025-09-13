@@ -1,18 +1,23 @@
 // FILE: netlify/functions/getAiResponse.ts
-// This version has an improved system prompt to handle failed tool calls more gracefully.
+// This version has a heavily revised system prompt to fix the booking and cancellation conversational flows.
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 
+// Define common headers that will be sent with every response.
 const headers = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': '*', // Allows any website to access this function
   'Access-Control-Allow-Headers': 'Content-Type',
   'Content-Type': 'application/json'
 };
 
 const handler: Handler = async (event: HandlerEvent) => {
     if (event.httpMethod === 'OPTIONS') {
-        return { statusCode: 200, headers, body: JSON.stringify({ message: 'CORS preflight successful' }) };
+        return {
+            statusCode: 200,
+            headers,
+            body: JSON.stringify({ message: 'CORS preflight successful' })
+        };
     }
 
     if (!process.env.GEMINI_API_KEY) {
@@ -30,23 +35,33 @@ const handler: Handler = async (event: HandlerEvent) => {
         return { statusCode: 400, headers, body: JSON.stringify({ error: "No history provided." }) };
     }
     
-    const currentDate = new Date().toLocaleDateString('en-CA');
+    const currentDate = new Date().toLocaleDateString('en-CA'); // Gets date in YYYY-MM-DD format
 
+    // --- REVISED SYSTEM PROMPT ---
     const systemPrompt = `
     You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
 
-    **Most Important Rule:** Be flexible with date/time formats. Interpret natural language like "next Friday at 5pm". You must convert this to 'YYYY-MM-DD' and 'HH:MM' before using any tool. NEVER repeatedly ask for a specific format.
+    **Most Important Rule:** Your primary job is to understand natural language. When a user gives you a date or time like "August 15th 2025", "next Tuesday at 5pm", or "10/10/25", you MUST interpret it and convert it to the required 'YYYY-MM-DD' and 'HH:MM' format for your tools. **NEVER repeatedly ask the user for a specific format.** If you are unsure, ask a single clarifying question (e.g., "Which month did you mean for the 15th?").
 
-    **Primary Directive for Tool Use:**
-    1.  **Gather Information:** Chat with the user to gather all the necessary details for a tool (like patient name, doctor, phone, date, time).
-    2.  **Confirm Details:** Before calling a tool, always confirm the complete details with the user.
-    3.  **Execute Tool:** After the user confirms, call the appropriate tool.
-    4.  **Handle Tool Failures:** If a tool returns a 'success: false' message or an error (like 'Could not find a confirmed appointment'), you MUST NOT ask for the same information again. Instead, you must relay the tool's message to the user in a helpful way. For example, if a cancellation fails, say "I couldn't find a confirmed appointment with those details. It might have already been cancelled or the details might be incorrect."
+    **Booking Process Directive:**
+    1.  First, ask for the desired specialty or doctor. Use 'getDoctorDetails' to verify and list available doctors.
+    2.  Once a doctor is selected, ask for the patient's full name and 10-digit phone number.
+    3.  Then, ask for the desired date and time.
+    4.  **Final Confirmation:** Before taking any action, you MUST repeat all the gathered details (Patient Name, Phone, Doctor Name, Date, Time) back to the user and ask for confirmation.
+    5.  **Execute Booking:** ONLY after the user confirms, you must call the 'bookAppointment' tool with the complete, confirmed information. You MUST remember all details through the confirmation step.
+
+    **Cancellation Process Directive:**
+    1. If the user asks to cancel an appointment, first check the conversation history to see if you just booked one for them. If so, use those details.
+    2. If not, ask for the patient's name, the doctor's name, and the appointment date.
+    3. Call the 'cancelAppointment' tool.
+    4. **Handle the Tool's Response:**
+        - If the tool returns 'success: true', you must inform the user the cancellation was successful.
+        - If the tool returns 'success: false' with a message like 'Could not find a confirmed appointment', you MUST inform the user of this gracefully. Say something like: "I couldn't find a confirmed appointment with those details. It might have already been cancelled or the details might be incorrect." DO NOT ask for the same information again.
 
     **Other Critical Rules:**
     - You are aware that the current date is ${currentDate}.
     - Do not provide medical advice.
-    - Always use the conversation history to remember details.
+    - Always use the conversation history to remember details the user has already provided.
     `;
 
     try {
@@ -106,3 +121,4 @@ const handler: Handler = async (event: HandlerEvent) => {
 };
 
 export { handler };
+
