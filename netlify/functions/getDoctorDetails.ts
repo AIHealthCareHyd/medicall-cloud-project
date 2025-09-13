@@ -1,55 +1,31 @@
 // FILE: netlify/functions/getDoctorDetails.ts
-// This version wraps the response in an object to satisfy the Gemini API.
-
 import { createClient } from '@supabase/supabase-js';
-import type { Handler } from '@netlify/functions';
+import type { Handler, HandlerEvent } from '@netlify/functions';
 
-const handler: Handler = async (event) => {
-    console.log("--- getDoctorDetails function started ---");
+const headers = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Content-Type': 'application/json'
+};
 
+const handler: Handler = async (event: HandlerEvent) => {
+    if (event.httpMethod === 'OPTIONS') {
+        return { statusCode: 200, headers, body: JSON.stringify({ message: 'CORS preflight successful' }) };
+    }
     if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
-        console.error("FATAL: Supabase environment variables are not set.");
-        return { statusCode: 500, body: JSON.stringify({ error: "Database configuration error." }) };
+        return { statusCode: 500, headers, body: JSON.stringify({ error: "Database configuration error." }) };
     }
-    console.log("Step 1: Supabase environment variables found.");
-
-    const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
-    
-    let body;
     try {
-        body = JSON.parse(event.body || '{}');
-    } catch (e) {
-        console.error("FATAL: Could not parse request body.", e);
-        return { statusCode: 400, body: JSON.stringify({ error: "Invalid request body." }) };
-    }
-    console.log("Step 2: Successfully parsed request body.");
-
-    const { specialty } = body;
-    console.log(`Step 3: Searching for specialty: "${specialty || 'any'}"`);
-
-    try {
+        const { specialty, doctorName } = JSON.parse(event.body || '{}');
+        const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
         let query = supabase.from('doctors').select('name, specialty');
-        if (specialty) {
-            query = query.ilike('specialty', `%${specialty}%`);
-        }
-        
+        if (specialty) query = query.ilike('specialty', `%${specialty}%`);
+        if (doctorName) query = query.ilike('name', `%${doctorName}%`);
         const { data, error } = await query;
-
-        if (error) {
-            throw error; // Let the catch block handle it
-        }
-
-        console.log(`Step 4: Found ${data?.length || 0} doctors.`);
-        
-        // --- THIS IS THE FIX ---
-        // We now return an object with a 'doctors' key, not just the array.
-        const responsePayload = { doctors: data || [] };
-        
-        return { statusCode: 200, body: JSON.stringify(responsePayload) };
-
-    } catch (error) {
-        console.error("FATAL: Error during Supabase query.", error);
-        return { statusCode: 500, body: JSON.stringify({ error: error.message }) };
+        if (error) throw error;
+        return { statusCode: 200, headers, body: JSON.stringify({ doctors: data }) };
+    } catch (error: any) {
+        return { statusCode: 500, headers, body: JSON.stringify({ success: false, message: error.message }) };
     }
 };
 
