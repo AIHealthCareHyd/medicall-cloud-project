@@ -1,5 +1,5 @@
 // FILE: netlify/functions/bookAppointment.ts
-// This version uses a more flexible search to find the doctor.
+// This version now accepts and saves the patient's phone number.
 
 import { createClient } from '@supabase/supabase-js';
 import type { Handler, HandlerEvent } from '@netlify/functions';
@@ -11,8 +11,6 @@ const headers = {
 };
 
 const handler: Handler = async (event: HandlerEvent) => {
-    console.log("--- bookAppointment function started ---");
-
     if (event.httpMethod === 'OPTIONS') {
         return { statusCode: 200, headers, body: JSON.stringify({ message: 'CORS preflight successful' }) };
     }
@@ -28,37 +26,36 @@ const handler: Handler = async (event: HandlerEvent) => {
         return { statusCode: 400, headers, body: JSON.stringify({ error: "Invalid request body." }) };
     }
 
-    const { doctorName, patientName, date, time } = body;
-    console.log(`Attempting to book for ${patientName} with ${doctorName} on ${date} at ${time}`);
+    // --- UPDATED: Destructure the new 'phone' field ---
+    const { doctorName, patientName, phone, date, time } = body;
 
-    if (!doctorName || !patientName || !date || !time) {
-        return { statusCode: 400, headers, body: JSON.stringify({ error: "Missing required appointment details." }) };
+    // --- UPDATED: Add 'phone' to the validation check ---
+    if (!doctorName || !patientName || !phone || !date || !time) {
+        return { statusCode: 400, headers, body: JSON.stringify({ error: "Missing required appointment details, including phone number." }) };
     }
 
     try {
         const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
-        // --- THIS IS THE FIX ---
-        // Find the doctor's ID using a case-insensitive "like" search to be more flexible.
         const { data: doctorData, error: doctorError } = await supabase
             .from('doctors')
             .select('id')
-            .ilike('name', `%${doctorName}%`) // Using ilike for a fuzzy search
+            .ilike('name', `%${doctorName}%`)
             .single();
 
         if (doctorError || !doctorData) {
-            console.error("Could not find doctor:", doctorName, doctorError);
             return { statusCode: 404, headers, body: JSON.stringify({ success: false, message: `Could not find a doctor named ${doctorName}.` }) };
         }
 
         const doctorId = doctorData.id;
 
-        // Now, insert the new appointment into the database
+        // --- UPDATED: Add the 'phone' field to the data being inserted ---
         const { error: appointmentError } = await supabase
             .from('appointments')
             .insert({
                 patient_name: patientName,
                 doctor_id: doctorId,
+                phone: phone, // Save the phone number
                 appointment_date: date,
                 appointment_time: time,
             });
@@ -67,7 +64,6 @@ const handler: Handler = async (event: HandlerEvent) => {
             throw appointmentError;
         }
 
-        console.log("Successfully booked appointment.");
         return {
             statusCode: 200,
             headers,

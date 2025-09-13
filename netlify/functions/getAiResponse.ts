@@ -1,23 +1,18 @@
 // FILE: netlify/functions/getAiResponse.ts
-// This version has a robust system prompt for flexible date handling and correctly uses conversation history.
+// This version adds the requirement for a phone number in the booking process.
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 
-// Define common headers that will be sent with every response.
 const headers = {
-  'Access-Control-Allow-Origin': '*', // Allows any website to access this function
+  'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'Content-Type',
   'Content-Type': 'application/json'
 };
 
 const handler: Handler = async (event: HandlerEvent) => {
     if (event.httpMethod === 'OPTIONS') {
-        return {
-            statusCode: 200,
-            headers,
-            body: JSON.stringify({ message: 'CORS preflight successful' })
-        };
+        return { statusCode: 200, headers, body: JSON.stringify({ message: 'CORS preflight successful' }) };
     }
 
     if (!process.env.GEMINI_API_KEY) {
@@ -35,21 +30,23 @@ const handler: Handler = async (event: HandlerEvent) => {
         return { statusCode: 400, headers, body: JSON.stringify({ error: "No history provided." }) };
     }
     
-    // Provide the current date to the AI for context
-    const currentDate = new Date().toLocaleDateString('en-CA'); // Gets date in YYYY-MM-DD format
+    const currentDate = new Date().toLocaleDateString('en-CA');
 
     const systemPrompt = `
     You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
+    Your primary job is to understand natural language and use your tools to manage appointments.
 
-    **Most Important Rule: Your primary job is to understand natural language. When a user gives you a date or time like "August 10th 2025", "next Tuesday at 5pm", or "10/08/25", you MUST interpret it and convert it to the required 'YYYY-MM-DD' and 'HH:MM' format before using any of your tools. NEVER repeatedly ask the user for a specific format. If you are unsure, ask a single clarifying question (e.g., "Which year for August 15th?").**
+    **Booking Process:**
+    1.  First, identify the doctor or specialty the user wants.
+    2.  Next, gather the patient's full name.
+    3.  Then, gather their 10-digit phone number.
+    4.  Finally, ask for the desired date and time.
+    5.  Once you have all four pieces of information (doctor, name, phone, date/time), confirm the details with the user before calling the 'bookAppointment' tool.
 
-    Critical Rules for Accuracy:
-    - Contextual Memory: You will receive the entire conversation history. Use it to understand the context of the user's latest message.
-    - Fuzzy Name Resolution: If a user provides a partial doctor's name for an action (e.g., "book with Dr. Kumar"), your first step MUST be to use the 'getDoctorDetails' tool with the partial 'doctorName' to find the full, correct name. Only after you have the exact full name from the tool should you proceed.
-
-    Other Instructions:
+    **Critical Rules:**
+    - Be flexible with date and time formats. You must interpret natural language like "next Friday" and convert it to 'YYYY-MM-DD' and 'HH:MM' for your tools.
     - You are aware that the current date is ${currentDate}.
-    - Do not provide medical advice. Politely decline and recommend booking an appointment.
+    - Do not provide medical advice.
     `;
 
     try {
@@ -59,19 +56,33 @@ const handler: Handler = async (event: HandlerEvent) => {
             tools: [{
                 functionDeclarations: [
                     { name: "getDoctorDetails", description: "Finds doctors by specialty or name.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, specialty: { type: "STRING" } } } },
-                    { name: "bookAppointment", description: "Books a medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, date: { type: "STRING" }, time: { type: "STRING" } }, required: ["doctorName", "patientName", "date", "time"] } },
+                    { 
+                        name: "bookAppointment",
+                        description: "Books a medical appointment once all details are collected.",
+                        // --- UPDATED: Added 'phone' parameter ---
+                        parameters: { 
+                            type: "OBJECT", 
+                            properties: { 
+                                doctorName: { type: "STRING" }, 
+                                patientName: { type: "STRING" }, 
+                                phone: { type: "STRING", description: "The patient's 10-digit phone number." },
+                                date: { type: "STRING" }, 
+                                time: { type: "STRING" } 
+                            }, 
+                            required: ["doctorName", "patientName", "phone", "date", "time"] 
+                        },
+                    },
                     { name: "cancelAppointment", description: "Cancels an existing medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, date: { type: "STRING" } }, required: ["doctorName", "patientName", "date"] } },
                     { name: "rescheduleAppointment", description: "Reschedules an existing medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, oldDate: { type: "STRING" }, newDate: { type: "STRING" }, newTime: { type: "STRING" } }, required: ["doctorName", "patientName", "oldDate", "newDate", "newTime"] } },
                 ],
             }],
         }); 
         
-        // Correctly initialize the chat with the full history
         const chat = model.startChat({
             history: [
                 { role: "user", parts: [{ text: systemPrompt }] },
                 { role: "model", parts: [{ text: "Understood. I am Sahay, an AI assistant for Prudence Hospitals. How can I assist?" }] },
-                ...history.slice(0, -1) // All previous turns
+                ...history.slice(0, -1)
             ]
         });
 
@@ -126,3 +137,4 @@ const handler: Handler = async (event: HandlerEvent) => {
 };
 
 export { handler };
+
