@@ -1,5 +1,5 @@
 // FILE: netlify/functions/getAiResponse.ts
-// This version adds the requirement for a phone number in the booking process.
+// This version adds the new 'getAllSpecialties' tool and updated instructions.
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
@@ -36,15 +36,16 @@ const handler: Handler = async (event: HandlerEvent) => {
     You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
     Your primary job is to understand natural language and use your tools to manage appointments.
 
-    **Booking Process:**
-    1.  First, identify the doctor or specialty the user wants.
-    2.  Next, gather the patient's full name.
-    3.  Then, gather their 10-digit phone number.
-    4.  Finally, ask for the desired date and time.
-    5.  Once you have all four pieces of information (doctor, name, phone, date/time), confirm the details with the user before calling the 'bookAppointment' tool.
+    **New Capability:** If a user asks for a list of all available specialties or departments, you MUST use the 'getAllSpecialties' tool.
 
-    **Critical Rules:**
-    - Be flexible with date and time formats. You must interpret natural language like "next Friday" and convert it to 'YYYY-MM-DD' and 'HH:MM' for your tools.
+    Booking Process:
+    1. First, identify the doctor or specialty the user wants.
+    2. Next, gather the patient's full name and 10-digit phone number.
+    3. Then, ask for the desired date and time.
+    4. Once you have all required information, confirm the details with the user before calling the 'bookAppointment' tool.
+
+    Critical Rules:
+    - Be flexible with date/time formats. Interpret natural language like "next Friday".
     - You are aware that the current date is ${currentDate}.
     - Do not provide medical advice.
     `;
@@ -55,23 +56,14 @@ const handler: Handler = async (event: HandlerEvent) => {
             model: "gemini-1.5-flash",
             tools: [{
                 functionDeclarations: [
-                    { name: "getDoctorDetails", description: "Finds doctors by specialty or name.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, specialty: { type: "STRING" } } } },
-                    { 
-                        name: "bookAppointment",
-                        description: "Books a medical appointment once all details are collected.",
-                        // --- UPDATED: Added 'phone' parameter ---
-                        parameters: { 
-                            type: "OBJECT", 
-                            properties: { 
-                                doctorName: { type: "STRING" }, 
-                                patientName: { type: "STRING" }, 
-                                phone: { type: "STRING", description: "The patient's 10-digit phone number." },
-                                date: { type: "STRING" }, 
-                                time: { type: "STRING" } 
-                            }, 
-                            required: ["doctorName", "patientName", "phone", "date", "time"] 
-                        },
+                    // --- NEW TOOL ADDED ---
+                    {
+                        name: "getAllSpecialties",
+                        description: "Gets a list of all unique medical specialties available at the hospital.",
+                        parameters: { type: "OBJECT", properties: {} },
                     },
+                    { name: "getDoctorDetails", description: "Finds doctors by specialty or name.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, specialty: { type: "STRING" } } } },
+                    { name: "bookAppointment", description: "Books a medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, phone: { type: "STRING" }, date: { type: "STRING" }, time: { type: "STRING" } }, required: ["doctorName", "patientName", "phone", "date", "time"] } },
                     { name: "cancelAppointment", description: "Cancels an existing medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, date: { type: "STRING" } }, required: ["doctorName", "patientName", "date"] } },
                     { name: "rescheduleAppointment", description: "Reschedules an existing medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, oldDate: { type: "STRING" }, newDate: { type: "STRING" }, newTime: { type: "STRING" } }, required: ["doctorName", "patientName", "oldDate", "newDate", "newTime"] } },
                 ],
@@ -99,7 +91,10 @@ const handler: Handler = async (event: HandlerEvent) => {
 
             const host = event.headers.host || 'sahayhealth.netlify.app';
 
-            if (call.name === 'getDoctorDetails') {
+            // --- NEW TOOL LOGIC ADDED ---
+            if (call.name === 'getAllSpecialties') {
+                toolUrl = `https://${host}/.netlify/functions/getAllSpecialties`;
+            } else if (call.name === 'getDoctorDetails') {
                 toolUrl = `https://${host}/.netlify/functions/getDoctorDetails`;
             } else if (call.name === 'bookAppointment') {
                 toolUrl = `https://${host}/.netlify/functions/bookAppointment`;
@@ -137,4 +132,3 @@ const handler: Handler = async (event: HandlerEvent) => {
 };
 
 export { handler };
-
