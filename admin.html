@@ -12,7 +12,7 @@
     <div id="app" class="container mx-auto p-4 md:p-8">
         <div class="bg-white p-6 rounded-lg shadow-lg">
             <h1 class="text-3xl font-bold text-gray-800 mb-2">Sahay - Appointments Dashboard</h1>
-            <p class="text-gray-600 mb-6">A live view of all appointments booked through the Sahay AI assistant.</p>
+            <p class="text-gray-600 mb-6">A live view of all appointments booked through the Sahay AI assistant. Use the filters below to search for a specific date.</p>
             
             <div id="kpi-cards" class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 text-center">
                 <div class="bg-blue-50 p-4 rounded-lg">
@@ -71,33 +71,82 @@
                 </table>
             </div>
         </div>
+
+        <div class="bg-white p-6 rounded-lg shadow-lg mt-8">
+            <h2 class="text-2xl font-bold text-gray-800 mb-4 border-b pb-2">Today's Live View</h2>
+            <div id="todays-loading" class="text-center p-8"><p class="text-gray-500">Loading today's live data...</p></div>
+            <div id="todays-error" class="hidden bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded"><strong class="font-bold">Error:</strong> <span id="todays-error-message"></span></div>
+
+            <div id="todays-data-container" class="hidden">
+                <div class="mb-8">
+                    <h3 class="text-xl font-semibold text-green-700 mb-3">✅ Confirmed Appointments for Today</h3>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full bg-white">
+                             <thead class="bg-green-600 text-white">
+                                <tr>
+                                    <th class="text-left py-3 px-4 uppercase font-semibold text-sm">Patient Name</th>
+                                    <th class="text-left py-3 px-4 uppercase font-semibold text-sm">Phone Number</th>
+                                    <th class="text-left py-3 px-4 uppercase font-semibold text-sm">Doctor Name</th>
+                                    <th class="text-left py-3 px-4 uppercase font-semibold text-sm">Time</th>
+                                </tr>
+                            </thead>
+                            <tbody id="todays-confirmed-tbody" class="text-gray-700"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div>
+                    <h3 class="text-xl font-semibold text-red-700 mb-3">❌ Cancelled Appointments for Today</h3>
+                     <div class="overflow-x-auto">
+                        <table class="min-w-full bg-white">
+                             <thead class="bg-red-600 text-white">
+                                <tr>
+                                    <th class="text-left py-3 px-4 uppercase font-semibold text-sm">Patient Name</th>
+                                    <th class="text-left py-3 px-4 uppercase font-semibold text-sm">Phone Number</th>
+                                    <th class="text-left py-3 px-4 uppercase font-semibold text-sm">Doctor Name</th>
+                                    <th class="text-left py-3 px-4 uppercase font-semibold text-sm">Time</th>
+                                </tr>
+                            </thead>
+                            <tbody id="todays-cancelled-tbody" class="text-gray-700"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
-        const SUPABASE_URL = 'https://mmvcwsvulelcyexsldrq.supabase.co'; 
+        const SUPABASE_URL = 'https://mmvcwsvulelcyexsldrq.supabase.co';  
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1tdmN3c3Z1bGVsY3lleHNsZHJxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI4MDY2MTUsImV4cCI6MjA2ODM4MjYxNX0.UsXEVXWV_R6jlhss3t2TERRE1DUDhRvZDulf9LsS_eY';
-
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        
+        // --- DOM Elements for Filterable Dashboard ---
         const loadingDiv = document.getElementById('loading');
         const errorDiv = document.getElementById('error');
         const errorMessageSpan = document.getElementById('error-message');
         const tableContainer = document.getElementById('table-container');
         const tbody = document.getElementById('appointments-tbody');
-        
         const dateFilter = document.getElementById('date-filter');
         const specialtyFilter = document.getElementById('specialty-filter');
         const statusFilter = document.getElementById('status-filter');
         const clearFiltersBtn = document.getElementById('clear-filters-btn');
-
         const kpiTotal = document.getElementById('kpi-total');
         const kpiConfirmed = document.getElementById('kpi-confirmed');
         const kpiCancelled = document.getElementById('kpi-cancelled');
         
-        let allAppointmentsForDate = [];
+        // --- DOM Elements for Today's Live View ---
+        const todaysLoadingDiv = document.getElementById('todays-loading');
+        const todaysErrorDiv = document.getElementById('todays-error');
+        const todaysErrorMessageSpan = document.getElementById('todays-error-message');
+        const todaysDataContainer = document.getElementById('todays-data-container');
+        const todaysConfirmedTbody = document.getElementById('todays-confirmed-tbody');
+        const todaysCancelledTbody = document.getElementById('todays-cancelled-tbody');
 
-        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        let allAppointmentsForDate = []; 
         
         const getTodayDateString = () => new Date().toLocaleDateString('en-CA');
 
+        // --- Functions for Filterable Dashboard ---
         function renderTable(appointmentsToDisplay) {
             tbody.innerHTML = '';
             if (appointmentsToDisplay.length === 0) {
@@ -174,6 +223,62 @@
             }
         }
 
+        // --- Functions for Today's Live View ---
+        function renderTodaysLiveTable(appointments, tbodyElement) {
+            tbodyElement.innerHTML = '';
+             if (appointments.length === 0) {
+                tbodyElement.innerHTML = '<tr><td colspan="4" class="text-center py-4">No appointments in this category for today.</td></tr>';
+            } else {
+                appointments.forEach(appt => {
+                    const row = document.createElement('tr');
+                    row.className = 'border-b border-gray-200 hover:bg-gray-100';
+                    const formattedTime = appt.appointment_time.substring(0, 5);
+
+                    row.innerHTML = `
+                        <td class="py-3 px-4">${appt.patient_name}</td>
+                        <td class="py-3 px-4">${appt.phone || 'N/A'}</td>
+                        <td class="py-3 px-4">${appt.doctors.name} (${appt.doctors.specialty})</td>
+                        <td class="py-3 px-4">${formattedTime}</td>
+                    `;
+                    tbodyElement.appendChild(row);
+                });
+            }
+        }
+
+        async function fetchAndDisplayTodaysAppointments() {
+            todaysLoadingDiv.classList.remove('hidden');
+            todaysDataContainer.classList.add('hidden');
+            todaysErrorDiv.classList.add('hidden');
+            const today = getTodayDateString();
+
+            try {
+                 const { data, error } = await supabaseClient
+                    .from('appointments')
+                    .select(`patient_name, phone, appointment_time, status, doctors ( name, specialty )`)
+                    .eq('appointment_date', today)
+                    .order('appointment_time', { ascending: true });
+                
+                if (error) throw error;
+
+                const confirmedToday = data.filter(a => a.status === 'confirmed');
+                const cancelledToday = data.filter(a => a.status === 'cancelled');
+
+                renderTodaysLiveTable(confirmedToday, todaysConfirmedTbody);
+                renderTodaysLiveTable(cancelledToday, todaysCancelledTbody);
+                
+                todaysLoadingDiv.classList.add('hidden');
+                todaysDataContainer.classList.remove('hidden');
+
+            } catch(err) {
+                console.error("Error fetching today's live data:", err);
+                todaysErrorMessageSpan.textContent = err.message;
+                todaysLoadingDiv.classList.add('hidden');
+                todaysErrorDiv.classList.remove('hidden');
+            }
+        }
+
+
+        // --- Common and Initialization Functions ---
         async function populateSpecialtyFilter() {
             const { data: doctors, error } = await supabaseClient.from('doctors').select('specialty');
             if (error) {
@@ -196,16 +301,19 @@
 
         clearFiltersBtn.addEventListener('click', () => {
             specialtyFilter.value = "";
-            statusFilter.value = "confirmed"; // Default back to confirmed
+            statusFilter.value = ""; 
             applyFilters();
         });
 
         // --- INITIALIZATION ---
         document.addEventListener('DOMContentLoaded', () => {
+            // Initialize the filterable dashboard
             dateFilter.value = getTodayDateString();
-            statusFilter.value = 'confirmed'; // Set default filter to confirmed
             populateSpecialtyFilter();
             fetchAppointmentsForDate(getTodayDateString());
+
+            // Initialize the new "Today's Live View" dashboard
+            fetchAndDisplayTodaysAppointments();
         });
     </script>
 </body>

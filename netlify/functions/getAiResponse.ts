@@ -44,23 +44,6 @@ const handler: Handler = async (event: HandlerEvent) => {
     **Your Core Task: Symptom Triage and Appointment Scheduling**
     Your most important job is to guide patients to the correct doctor.
 
-    **Available Specialties at Prudence Hospitals:**
-    - General Physician
-    - Cardiology
-    - Gastroenterology
-    - Neurology
-    - Nephrology
-    - Urology
-    - Radiology
-    - Surgical Oncology
-    - Medical Oncology
-    - Radiation Oncology
-    - Surgical Gastroenterology
-    - Anaesthesiology and Critical Care
-    - Internal Medicine
-    - Orthopaedics
-    - ENT
-    - Pathology
 
     **Workflow for New Appointments:**
     1.  **Understand the User's Need:** When a user asks to book an appointment, first ask for their symptoms or the specialty they are looking for.
