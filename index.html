@@ -25,7 +25,6 @@
             ]);
             const [status, setStatus] = useState('idle'); // idle, listening, thinking, speaking
             const [isListeningActive, setIsListeningActive] = useState(false);
-            // --- NEW STATE for text input ---
             const [inputText, setInputText] = useState('');
             
             const recognitionRef = useRef(null);
@@ -87,26 +86,41 @@
                     const data = await response.json();
                     const aiReplyText = data.reply || "Sorry, I had trouble understanding that.";
                     
+                    // --- SPEECH FORMATTING FIXES START HERE ---
+                    
+                    let textForSpeech = aiReplyText;
+
+                    textForSpeech = textForSpeech.replace(/[*#]/g, ''); 
+
+                    textForSpeech = textForSpeech.replace(/\b\d{7,}\b/g, (match) => {
+                        // First, add spaces between each digit.
+                        let spacedNumber = match.split('').join(' ');
+                        
+                        // Then, replace every "0" with the word "zero" for correct pronunciation.
+                        return spacedNumber.replace(/0/g, 'zero');
+                    });
+
+                    // --- SPEECH FORMATTING FIXES END HERE ---
+
                     setConversation(prev => [...prev, { role: 'model', text: aiReplyText }]);
                     
-                    await speak(aiReplyText);
+                    // Use the newly formatted text for clear, natural-sounding speech.
+                    await speak(textForSpeech);
                     
-                    if (isListeningActive && recognitionRef.current) {
-                        recognitionRef.current.start();
-                    }
+                    // ERROR FIX: This block was removed.
+                    // The 'onend' event handler is now solely responsible for restarting recognition.
+                    // This prevents a race condition where start() was called twice.
 
                 } catch (error) {
                     console.error("Error fetching AI response:", error);
                     const errorText = `There was an error: ${error.message}`;
                     setConversation(prev => [...prev, { role: 'model', text: errorText }]);
                     await speak(errorText).catch(e => console.error("Error speaking the error message:", e));
-                    if (isListeningActive && recognitionRef.current) {
-                        recognitionRef.current.start();
-                    }
+                    
+                    // ERROR FIX: Also removed the redundant start() call from the catch block.
                 }
             };
 
-            // --- NEW FUNCTION to handle typed text submission ---
             const handleTextSubmit = (e) => {
                 e.preventDefault();
                 const trimmedInput = inputText.trim();
@@ -151,8 +165,10 @@
                 recognition.onstart = () => setStatus('listening');
 
                 recognition.onend = () => {
+                    // This is now the only place that restarts recognition.
+                    // It runs if listening is still active and the AI isn't busy.
                     if (isListeningActive && status !== 'thinking' && status !== 'speaking') {
-                        console.log("Recognition timed out, restarting...");
+                        console.log("Recognition ended, restarting...");
                         try {
                             recognition.start();
                         } catch (e) {
@@ -186,10 +202,12 @@
                 };
 
                 return () => {
-                    recognition.onstart = null;
-                    recognition.onend = null;
-                    recognition.onerror = null;
-                    recognition.onresult = null;
+                    if (recognitionRef.current) {
+                        recognitionRef.current.onstart = null;
+                        recognitionRef.current.onend = null;
+                        recognitionRef.current.onerror = null;
+                        recognitionRef.current.onresult = null;
+                    }
                 };
             }, [isListeningActive, status]);
 
@@ -202,7 +220,6 @@
                 return () => { window.speechSynthesis.onvoiceschanged = null; };
             }, []);
 
-            // --- UPDATED JSX for chat layout ---
             return (
                 <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 font-sans p-4">
                     <div className="w-full max-w-md h-[80vh] flex flex-col bg-white rounded-lg shadow-xl">
@@ -265,3 +282,4 @@
 
 </body>
 </html>
+
