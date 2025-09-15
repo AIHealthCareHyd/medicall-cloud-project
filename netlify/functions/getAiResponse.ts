@@ -1,4 +1,5 @@
 // FILE: netlify/functions/getAiResponse.ts
+// This is the final version, designed to work with your new Text-to-Speech API function.
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 
@@ -34,7 +35,7 @@ const handler: Handler = async (event: HandlerEvent) => {
     
     const currentDate = new Date().toLocaleDateString('en-CA');
 
-    // --- REVISED SYSTEM PROMPT ---
+    // --- FINAL TELUGU SYSTEM PROMPT ---
     const systemPrompt = `
     You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
 
@@ -78,7 +79,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         const chat = model.startChat({
             history: [
                 { role: "user", parts: [{ text: systemPrompt }] },
-                { role: "model", parts: [{ text: "నమస్కారం, నేను సహాయ్, మీ AI సహాయకుడిని. నేను మీకు ఎలా సహాయపడగలను?" }] },
+                { role: "model", parts: [{ text: "అర్థమైంది. నేను ప్రూడెన్స్ హాస్పిటల్స్ కోసం సహాయ్, AI అసిస్టెంట్. నేను రోగులకు వారి లక్షణాల ఆధారంగా సరైన నిపుణుడిని కనుగొనడంలో సహాయం చేస్తాను. నేను మీకు ఎలా సహాయపడగలను?" }] },
                 ...history.slice(0, -1)
             ]
         });
