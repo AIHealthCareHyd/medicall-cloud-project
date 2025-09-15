@@ -34,25 +34,25 @@ const handler: Handler = async (event: HandlerEvent) => {
     
     const currentDate = new Date().toLocaleDateString('en-CA');
 
-    // --- CHANGE IS HERE: Updated workflow for checking slots ---
+    // --- CHANGE IS HERE: A more detailed, multi-step workflow for the AI ---
     const systemPrompt = `
     You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
 
     **Workflow for New Appointments:**
     1.  **Understand Need:** Ask for symptoms or specialty.
-    2.  **Find Doctor:** Use 'getDoctorDetails' to find a doctor for the user. Once the user confirms a doctor, proceed.
+    2.  **Find Doctor:** Use 'getDoctorDetails' to find a doctor. Once the user confirms, proceed.
     3.  **Get Date:** Ask the user for their preferred date.
-    4.  **Check Schedule (CRITICAL STEP):** Once you have the doctor's name and the date, you MUST use the 'getAvailableSlots' tool to see their schedule for that day.
-    5.  **Present Available Times:** Show the list of available time slots to the user and ask them to pick one. Do NOT ask them for a time before you have this list.
-    6.  **Gather Final Details:** After they pick a time, get the patient's name and phone number.
-    7.  **Final Confirmation:** Confirm all details (Doctor's FULL name, date, chosen time, patient name, phone).
-    8.  **Execute Booking:** Call the 'bookAppointment' tool with the exact, confirmed details.
+    4.  **Check Schedule (CRITICAL MULTI-STEP PROCESS):**
+        a. **First Call:** Call the 'getAvailableSlots' tool with ONLY the doctor's name and date. The tool will return available periods (e.g., ["morning", "afternoon"]).
+        b. **Ask User:** Based on the returned periods, ask the user for their preference. For example: "The doctor has openings in the morning and afternoon. Do you have a preference?"
+        c. **Second Call:** Once the user responds (e.g., "morning"), call the 'getAvailableSlots' tool AGAIN. This time, include their choice. (e.g., doctorName, date, and timeOfDay: 'morning').
+        d. **Present Specific Times:** The tool will now return a short list of specific times. Present these options to the user.
+    5.  **Gather Final Details:** After they pick a time, get the patient's name and phone number.
+    6.  **Final Confirmation & Booking:** Confirm all details, then call the 'bookAppointment' tool.
     
     **Other Rules:**
-    - If 'getAvailableSlots' returns an empty list, inform the user that the doctor is fully booked on that day and ask them to choose another date.
-    - Be flexible with date/time formats.
-    - If a tool fails, explain the issue gracefully.
-    - You are aware that the current date is ${currentDate}.
+    - If the first 'getAvailableSlots' call returns an empty list, the doctor is fully booked. Inform the user.
+    - Today's date is ${currentDate}.
     - Do not provide medical advice.
     `;
 
@@ -62,8 +62,20 @@ const handler: Handler = async (event: HandlerEvent) => {
             model: "gemini-1.5-flash",
             tools: [{
                 functionDeclarations: [
-                    // --- CHANGE IS HERE: Added the new tool definition ---
-                    { name: "getAvailableSlots", description: "Gets the available appointment time slots for a specific doctor on a given date.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, date: { type: "STRING" } }, required: ["doctorName", "date"] } },
+                    // --- CHANGE IS HERE: Added the optional 'timeOfDay' parameter ---
+                    { 
+                        name: "getAvailableSlots", 
+                        description: "Gets available time slots for a doctor. If 'timeOfDay' is not provided, it returns available periods (morning, afternoon). If 'timeOfDay' IS provided, it returns specific times for that period.", 
+                        parameters: { 
+                            type: "OBJECT", 
+                            properties: { 
+                                doctorName: { type: "STRING" }, 
+                                date: { type: "STRING" },
+                                timeOfDay: { type: "STRING", description: "Optional. Can be 'morning', 'afternoon', or 'evening'." } 
+                            }, 
+                            required: ["doctorName", "date"] 
+                        } 
+                    },
                     { name: "getAllSpecialties", description: "Gets a list of all unique medical specialties available at the hospital.", parameters: { type: "OBJECT", properties: {} } },
                     { name: "getDoctorDetails", description: "Finds doctors by specialty or name.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, specialty: { type: "STRING" } } } },
                     { name: "bookAppointment", description: "Books a medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, phone: { type: "STRING" }, date: { type: "STRING" }, time: { type: "STRING" } }, required: ["doctorName", "patientName", "phone", "date", "time"] } },
@@ -115,4 +127,3 @@ const handler: Handler = async (event: HandlerEvent) => {
 };
 
 export { handler };
-
