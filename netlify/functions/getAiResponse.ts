@@ -1,12 +1,9 @@
 // FILE: netlify/functions/getAiResponse.ts
-// This version has a heavily revised system prompt to allow the AI to guide users from symptoms to specialties.
-
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 
-// Define common headers that will be sent with every response.
 const headers = {
-  'Access-Control-Allow-Origin': '*', // Allows any website to access this function
+  'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'Content-Type',
   'Content-Type': 'application/json'
 };
@@ -35,7 +32,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         return { statusCode: 400, headers, body: JSON.stringify({ error: "No history provided." }) };
     }
     
-    const currentDate = new Date().toLocaleDateString('en-CA'); // Gets date in YYYY-MM-DD format
+    const currentDate = new Date().toLocaleDateString('en-CA');
 
     // --- REVISED SYSTEM PROMPT ---
     const systemPrompt = `
@@ -47,18 +44,19 @@ const handler: Handler = async (event: HandlerEvent) => {
 
     **Workflow for New Appointments:**
     1.  **Understand the User's Need:** When a user asks to book an appointment, first ask for their symptoms or the specialty they are looking for.
-    2.  **Symptom Analysis (Crucial Step):** If the user provides a symptom (e.g., "I have a fever", "my stomach hurts"), you MUST use your medical knowledge to determine the most appropriate specialty from the list above.
-        - **Example:** If the user says "I have a normal fever", you should respond with something like, "For a fever, it's best to see a General Physician. Would you like me to find an available General Physician for you?"
-    3.  **Confirm Specialty:** Once the specialty is determined (either by your suggestion or the user's request), use the 'getDoctorDetails' tool to find doctors for that specialty.
-    4.  **Gather Information:** After a doctor is chosen, proceed to gather the patient's name, phone number, and desired date/time.
-    5.  **Final Confirmation:** Before booking, confirm all details with the user.
-    6.  **Execute Booking:** After confirmation, call the 'bookAppointment' tool.
+    2.  **Symptom Analysis (Crucial Step):** If the user provides a symptom (e.g., "I have a fever"), you MUST use your medical knowledge to determine the most appropriate specialty.
+    3.  **Confirm Specialty:** Once the specialty is determined, use the 'getDoctorDetails' tool to find doctors.
+    4.  **Present Options & Get Confirmation:** If the 'getDoctorDetails' tool returns one or more doctors, present the full names to the user and ask them to confirm which one they want.
+    5.  **Gather Information:** After a doctor is chosen, proceed to gather the patient's name, phone number, and desired date/time.
+    6.  **Final Confirmation:** Before booking, confirm all details with the user.
+    7.  **Execute Booking:** After confirmation, call the 'bookAppointment' tool. **Crucially, you MUST use the doctor's full, exact name that you presented in step 4.**
     
     **Other Rules:**
     - Be flexible with date/time formats.
     - If a tool fails, explain the issue gracefully (e.g., "I couldn't find any available appointments on that day.").
     - You are aware that the current date is ${currentDate}.
     - Do not provide medical advice, only guide them to the correct specialist.
+    - When confirming a phone number, repeat it with spaces between each digit to ensure it is read clearly (e.g., "Is your phone number 9 0 1 4 3 8 6 8 0 4?").
     `;
 
     try {
