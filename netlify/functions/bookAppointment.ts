@@ -25,8 +25,27 @@ const handler: Handler = async (event: HandlerEvent) => {
         if (doctorError || !doctorData) {
             return { statusCode: 404, headers, body: JSON.stringify({ success: false, message: `Could not find a doctor named ${doctorName}.` }) };
         }
+
+        // --- CHANGE IS HERE: Safety check before booking ---
+        const { data: existingAppointment, error: checkError } = await supabase
+            .from('appointments')
+            .select('id')
+            .eq('doctor_id', doctorData.id)
+            .eq('appointment_date', date)
+            .eq('appointment_time', time)
+            .eq('status', 'confirmed')
+            .maybeSingle();
+
+        if (checkError) throw checkError;
+
+        if (existingAppointment) {
+            return { statusCode: 409, headers, body: JSON.stringify({ success: false, message: `Sorry, the time slot ${time} with ${doctorName} was just booked by someone else. Please try another time.` }) };
+        }
+        // --- END OF CHANGE ---
+
         const { error: appointmentError } = await supabase.from('appointments').insert({ patient_name: patientName, doctor_id: doctorData.id, appointment_date: date, appointment_time: time, phone: phone });
         if (appointmentError) throw appointmentError;
+        
         return { statusCode: 200, headers, body: JSON.stringify({ success: true, message: 'Appointment booked successfully.' }) };
     } catch (error: any) {
         return { statusCode: 500, headers, body: JSON.stringify({ success: false, message: error.message }) };
@@ -34,3 +53,4 @@ const handler: Handler = async (event: HandlerEvent) => {
 };
 
 export { handler };
+
