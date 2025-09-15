@@ -8,13 +8,6 @@ const headers = {
   'Content-Type': 'application/json'
 };
 
-// Define the standard available time slots for a doctor in a day
-const ALL_POSSIBLE_SLOTS = [
-    "09:00", "09:30", "10:00", "10:30", "11:00", "11:30", 
-    "12:00", "12:30", "14:00", "14:30", "15:00", "15:30", 
-    "16:00", "16:30", "17:00"
-];
-
 const handler: Handler = async (event: HandlerEvent) => {
     if (event.httpMethod === 'OPTIONS') {
         return { statusCode: 200, headers };
@@ -35,7 +28,7 @@ const handler: Handler = async (event: HandlerEvent) => {
             return { statusCode: 404, headers, body: JSON.stringify({ success: false, message: `Could not find a doctor named ${doctorName}.` }) };
         }
 
-        // Find all confirmed appointments for this doctor on the given date
+        // Fetch all confirmed appointments for this doctor on the given date
         const { data: bookedAppointments, error: bookedError } = await supabase
             .from('appointments')
             .select('appointment_time')
@@ -45,10 +38,33 @@ const handler: Handler = async (event: HandlerEvent) => {
 
         if (bookedError) throw bookedError;
 
-        const bookedTimes = bookedAppointments.map(appt => appt.appointment_time.substring(0, 5));
+        // --- DYNAMIC LOGIC STARTS HERE ---
+        // 1. Define doctor's working hours and slot duration
+        const dayStart = new Date(`${date}T09:00:00`);
+        const dayEnd = new Date(`${date}T17:00:00`);
+        const slotDurationMinutes = 15; // Your 15-minute requirement
+
+        // 2. Create a fast way to check if a slot is booked
+        const bookedTimes = new Set(bookedAppointments.map(appt => appt.appointment_time));
         
-        // Filter the possible slots to find only the available ones
-        const availableSlots = ALL_POSSIBLE_SLOTS.filter(slot => !bookedTimes.includes(slot));
+        // 3. Loop through the day and generate available slots
+        const availableSlots = [];
+        let currentTime = dayStart;
+
+        while (currentTime < dayEnd) {
+            // Exclude common lunch break (1:00 PM to 2:00 PM)
+            if (currentTime.getHours() !== 13) {
+                 const timeString = currentTime.toLocaleTimeString('en-GB'); // Format as "HH:mm:ss"
+
+                // If the current time slot is NOT in the set of booked times, it's available
+                if (!bookedTimes.has(timeString)) {
+                    availableSlots.push(currentTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }));
+                }
+            }
+            // Move to the next 15-minute slot for the next loop iteration
+            currentTime.setMinutes(currentTime.getMinutes() + slotDurationMinutes);
+        }
+        // --- DYNAMIC LOGIC ENDS HERE ---
 
         return { statusCode: 200, headers, body: JSON.stringify({ success: true, availableSlots }) };
 
