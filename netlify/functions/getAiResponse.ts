@@ -1,4 +1,3 @@
-// FILE: netlify/functions/getAiResponse.ts
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 
@@ -10,16 +9,13 @@ const headers = {
 
 const handler: Handler = async (event: HandlerEvent) => {
     if (event.httpMethod === 'OPTIONS') {
-        return {
-            statusCode: 200,
-            headers,
-            body: JSON.stringify({ message: 'CORS preflight successful' })
-        };
+        return { statusCode: 200, headers, body: JSON.stringify({ message: 'CORS preflight successful' }) };
     }
 
     if (!process.env.GEMINI_API_KEY) {
         return { statusCode: 500, headers, body: JSON.stringify({ error: "AI configuration error." }) };
     }
+
     let body;
     try {
         body = JSON.parse(event.body || '{}');
@@ -34,29 +30,36 @@ const handler: Handler = async (event: HandlerEvent) => {
     
     const currentDate = new Date().toLocaleDateString('en-CA');
 
-    // --- REVISED SYSTEM PROMPT ---
+    // --- REVISED BILINGUAL SYSTEM PROMPT ---
     const systemPrompt = `
     You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
 
-    **Your Core Task: Symptom Triage and Appointment Scheduling**
-    Your most important job is to guide patients to the correct doctor.
+    **Your Core Task:** You will communicate with the user via a chat interface. Your written responses, which will be displayed in the chat, MUST be in clear, concise English. However, the system will speak your response aloud to the user in Telugu.
 
+    **CRITICAL OUTPUT FORMAT:**
+    You MUST format your final output as a single, valid JSON object with two keys: "english" and "telugu".
+    - The "english" key will contain the message to be displayed in the chat UI.
+    - The "telugu" key will contain the exact Telugu translation of the English message, which will be used for text-to-speech.
+
+    Example Response Format:
+    {
+      "english": "Hello! I am Sahay, your AI assistant. How can I help you today?",
+      "telugu": "నమస్కారం! నేను సహాయ్, మీ AI అసిస్టెంట్. నేను మీకు ఎలా సహాయపడగలను?"
+    }
 
     **Workflow for New Appointments:**
-    1.  **Understand the User's Need:** When a user asks to book an appointment, first ask for their symptoms or the specialty they are looking for.
-    2.  **Symptom Analysis (Crucial Step):** If the user provides a symptom (e.g., "I have a fever"), you MUST use your medical knowledge to determine the most appropriate specialty.
-    3.  **Confirm Specialty:** Once the specialty is determined, use the 'getDoctorDetails' tool to find doctors.
-    4.  **Present Options & Get Confirmation:** If the 'getDoctorDetails' tool returns one or more doctors, present the full names to the user and ask them to confirm which one they want.
-    5.  **Gather Information:** After a doctor is chosen, proceed to gather the patient's name, phone number, and desired date/time.
-    6.  **Final Confirmation:** Before booking, confirm all details with the user.
-    7.  **Execute Booking:** After confirmation, call the 'bookAppointment' tool. **Crucially, you MUST use the doctor's full, exact name that you presented in step 4.**
-    
+    1.  **Understand the User's Need:** Ask for their symptoms or the specialty they are looking for (in English).
+    2.  **Symptom Analysis:** Determine the most appropriate specialty based on symptoms.
+    3.  **Confirm Specialty:** Use the 'getDoctorDetails' tool to find doctors.
+    4.  **Present Options & Get Confirmation:** Present the doctor's full names to the user in English.
+    5.  **Gather Information:** Gather the patient's name, phone number, and desired date/time in English.
+    6.  **Final Confirmation:** Before booking, confirm all details with the user in English.
+    7.  **Execute Booking:** Call the 'bookAppointment' tool.
+
     **Other Rules:**
-    - Be flexible with date/time formats.
-    - If a tool fails, explain the issue gracefully (e.g., "I couldn't find any available appointments on that day.").
+    - If a tool fails, explain the issue gracefully in English.
     - You are aware that the current date is ${currentDate}.
-    - Do not provide medical advice, only guide them to the correct specialist.
-    - When confirming a phone number, repeat it with spaces between each digit to ensure it is read clearly (e.g., "Is your phone number 9 0 1 4 3 8 6 8 0 4?").
+    - Do not provide medical advice.
     `;
 
     try {
@@ -77,20 +80,20 @@ const handler: Handler = async (event: HandlerEvent) => {
         const chat = model.startChat({
             history: [
                 { role: "user", parts: [{ text: systemPrompt }] },
-                { role: "model", parts: [{ text: "Understood. I am Sahay, an AI assistant for Prudence Hospitals. I will help guide patients to the correct specialist based on their symptoms. How can I assist?" }] },
+                { role: "model", parts: [{ text: JSON.stringify({ english: "Understood. I will provide my responses in JSON format with English for display and Telugu for speech.", telugu: "అర్థమైంది. నేను నా సమాధానాలను ప్రదర్శన కోసం ఇంగ్లీష్‌లో మరియు ప్రసంగం కోసం తెలుగులో JSON ఫార్మాట్‌లో అందిస్తాను."}) }] },
                 ...history.slice(0, -1)
             ]
         });
 
         const latestUserMessage = history[history.length - 1].parts[0].text;
-
         const result = await chat.sendMessage(latestUserMessage);
         const response = result.response;
         const functionCalls = response.functionCalls();
 
+        let finalReply;
+
         if (functionCalls && functionCalls.length > 0) {
             const call = functionCalls[0];
-            let toolResult;
             const host = event.headers.host || 'sahayhealth.netlify.app';
             const toolUrl = `https://${host}/.netlify/functions/${call.name}`;
             
@@ -99,21 +102,27 @@ const handler: Handler = async (event: HandlerEvent) => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(call.args),
             });
-            toolResult = await toolResponse.json();
+            const toolResult = await toolResponse.json();
 
             const result2 = await chat.sendMessage([{ functionResponse: { name: call.name, response: toolResult } }]);
-            const finalResponse = result2.response.text();
-            return { statusCode: 200, headers, body: JSON.stringify({ reply: finalResponse }) };
+            finalReply = result2.response.text();
+        } else {
+            finalReply = response.text();
         }
 
-        const text = response.text();
-        return { statusCode: 200, headers, body: JSON.stringify({ reply: text }) };
+        try {
+            const parsedReply = JSON.parse(finalReply);
+            return { statusCode: 200, headers, body: JSON.stringify({ reply: parsedReply }) };
+        } catch(e) {
+            console.error("Failed to parse AI response as JSON, sending as fallback:", finalReply);
+            const fallbackReply = { english: finalReply, telugu: finalReply }; // Fallback if AI fails to return JSON
+            return { statusCode: 200, headers, body: JSON.stringify({ reply: fallbackReply }) };
+        }
 
-    } catch (error) {
+    } catch (error: any) {
         console.error("FATAL: Error during Gemini API call or tool execution.", error);
-        return { statusCode: 500, headers, body: JSON.stringify({ error: "Failed to process request." }) };
+        return { statusCode: 500, headers, body: JSON.stringify({ error: error.message || "Failed to process request." }) };
     }
 };
 
 export { handler };
-
