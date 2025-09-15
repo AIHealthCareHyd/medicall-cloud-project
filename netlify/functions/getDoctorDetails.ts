@@ -18,34 +18,15 @@ const handler: Handler = async (event: HandlerEvent) => {
     try {
         const { specialty, doctorName } = JSON.parse(event.body || '{}');
         const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
-        
         let query = supabase.from('doctors').select('name, specialty');
-
-        if (specialty) {
-            query = query.ilike('specialty', `%${specialty}%`);
-        }
-
-        // --- CHANGE IS HERE ---
-        // This new logic is much more flexible for searching names.
-        // It takes an input like "aditya" and searches for records containing that word.
-        if (doctorName) {
-            const searchTerms = doctorName.trim().split(/\s+/).join(' & ');
-            query = query.textSearch('name', searchTerms, {
-                type: 'websearch', // This is a flexible search type
-                config: 'english'
-            });
-        }
-        // --- END OF CHANGE ---
-
+        if (specialty) query = query.ilike('specialty', `%${specialty}%`);
+        if (doctorName) query = query.ilike('name', `%${doctorName}%`);
         const { data, error } = await query;
         if (error) throw error;
-        
         return { statusCode: 200, headers, body: JSON.stringify({ doctors: data }) };
-
     } catch (error: any) {
         return { statusCode: 500, headers, body: JSON.stringify({ success: false, message: error.message }) };
     }
 };
 
 export { handler };
-
