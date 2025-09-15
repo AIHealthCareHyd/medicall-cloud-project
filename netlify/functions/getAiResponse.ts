@@ -1,3 +1,4 @@
+// FILE: netlify/functions/getAiResponse.ts
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 
@@ -7,16 +8,18 @@ const headers = {
   'Content-Type': 'application/json'
 };
 
-// FIX: Corrected typo from "hangetdler" to "handler"
 const handler: Handler = async (event: HandlerEvent) => {
     if (event.httpMethod === 'OPTIONS') {
-        return { statusCode: 200, headers, body: JSON.stringify({ message: 'CORS preflight successful' }) };
+        return {
+            statusCode: 200,
+            headers,
+            body: JSON.stringify({ message: 'CORS preflight successful' })
+        };
     }
 
     if (!process.env.GEMINI_API_KEY) {
         return { statusCode: 500, headers, body: JSON.stringify({ error: "AI configuration error." }) };
     }
-
     let body;
     try {
         body = JSON.parse(event.body || '{}');
@@ -29,37 +32,32 @@ const handler: Handler = async (event: HandlerEvent) => {
         return { statusCode: 400, headers, body: JSON.stringify({ error: "No history provided." }) };
     }
     
-    // FIX: Corrected typo from "toLocaleDateIString" to "toLocaleDateString"
     const currentDate = new Date().toLocaleDateString('en-CA');
 
-    // --- REFINED BILINGUAL SYSTEM PROMPT for better fluency ---
+    // --- REVISED SYSTEM PROMPT ---
     const systemPrompt = `
-    You are Sahay, a friendly AI medical assistant for Prudence Hospitals.
+    You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
 
-    **Your Core Task:** Your written responses, displayed in the chat, MUST be in clear, concise English. However, the system will speak your response aloud to the user in Telugu.
+    **Primary Instruction: You MUST conduct the entire conversation in Telugu.** Greet the user, ask all questions, present information, and confirm details exclusively in the Telugu language.
 
-    **CRITICAL OUTPUT FORMAT:**
-    You MUST format your final output as a single, valid JSON object with "english" and "telugu" keys.
-    - "english": The message for the chat UI.
-    - "telugu": The Telugu translation. **This must be highly fluent, conversational, and natural-sounding, as if a real person is speaking. Avoid overly formal or robotic language.**
+    **Your Core Task: Symptom Triage and Appointment Scheduling**
+    Your most important job is to guide patients to the correct doctor.
 
-    Example:
-    {
-      "english": "Of course. What day would you like to book the appointment for?",
-      "telugu": "తప్పకుండా. మీరు ఏ రోజున అపాయింట్‌మెంట్ బుక్ చేసుకోవాలనుకుంటున్నారు?"
-    }
 
-    **Workflow:**
-    1.  Ask for the user's need (symptoms, specialty) in English.
-    2.  Use tools to find doctors or specialties.
-    3.  Present options to the user in English.
-    4.  Gather patient details (name, phone, date, time) in English.
-    5.  Confirm all details before using the 'bookAppointment' tool.
-
+    **Workflow for New Appointments:**
+    1.  **Understand the User's Need:** When a user asks to book an appointment, first ask for their symptoms or the specialty they are looking for (in Telugu).
+    2.  **Symptom Analysis (Crucial Step):** If the user provides a symptom, you MUST use your medical knowledge to determine the most appropriate specialty.
+    3.  **Confirm Specialty:** Once the specialty is determined, use the 'getDoctorDetails' tool to find doctors.
+    4.  **Present Options & Get Confirmation:** If the 'getDoctorDetails' tool returns one or more doctors, present the full names to the user and ask them to confirm which one they want (in Telugu).
+    5.  **Gather Information:** After a doctor is chosen, proceed to gather the patient's name, phone number, and desired date/time (in Telugu).
+    6.  **Final Confirmation:** Before booking, confirm all details with the user (in Telugu).
+    7.  **Execute Booking:** After confirmation, call the 'bookAppointment' tool. **Crucially, you MUST use the doctor's full, exact name that you presented in step 4.**
+    
     **Other Rules:**
-    - If a tool fails, explain it gracefully in English.
-    - You know the current date is ${currentDate}.
-    - Do not give medical advice.
+    - Be flexible with date/time formats.
+    - If a tool fails, explain the issue gracefully (in Telugu).
+    - You are aware that the current date is ${currentDate}.
+    - Do not provide medical advice, only guide them to the correct specialist.
     `;
 
     try {
@@ -80,20 +78,20 @@ const handler: Handler = async (event: HandlerEvent) => {
         const chat = model.startChat({
             history: [
                 { role: "user", parts: [{ text: systemPrompt }] },
-                { role: "model", parts: [{ text: JSON.stringify({ english: "Understood. I will provide my responses in JSON format with English for display and fluent Telugu for speech.", telugu: "అర్థమైంది. నేను నా సమాధానాలను ప్రదర్శన కోసం ఇంగ్లీష్‌లో మరియు స్పష్టమైన ప్రసంగం కోసం తెలుగులో JSON ఫార్మాట్‌లో అందిస్తాను."}) }] },
+                { role: "model", parts: [{ text: "నమస్కారం, నేను సహాయ్, మీ AI సహాయకుడిని. నేను మీకు ఎలా సహాయపడగలను?" }] },
                 ...history.slice(0, -1)
             ]
         });
 
         const latestUserMessage = history[history.length - 1].parts[0].text;
+
         const result = await chat.sendMessage(latestUserMessage);
         const response = result.response;
         const functionCalls = response.functionCalls();
 
-        let finalReply;
-
         if (functionCalls && functionCalls.length > 0) {
             const call = functionCalls[0];
+            let toolResult;
             const host = event.headers.host || 'sahayhealth.netlify.app';
             const toolUrl = `https://${host}/.netlify/functions/${call.name}`;
             
@@ -102,32 +100,19 @@ const handler: Handler = async (event: HandlerEvent) => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(call.args),
             });
-            const toolResult = await toolResponse.json();
+            toolResult = await toolResponse.json();
 
             const result2 = await chat.sendMessage([{ functionResponse: { name: call.name, response: toolResult } }]);
-            finalReply = result2.response.text();
-        } else {
-            finalReply = response.text();
-        }
-        
-        const cleanedReply = finalReply.replace(/^```json\s*|```$/g, '').trim();
-
-        try {
-            const parsedReply = JSON.parse(cleanedReply);
-            return { statusCode: 200, headers, body: JSON.stringify({ reply: parsedReply }) };
-        } catch(e) {
-            console.error("Failed to parse AI response as JSON, sending as fallback:", cleanedReply);
-            const fallbackReply = { english: cleanedReply, telugu: "క్షమించండి, ఒక లోపం సంభవించింది." };
-            return { statusCode: 200, headers, body: JSON.stringify({ reply: fallbackReply }) };
+            const finalResponse = result2.response.text();
+            return { statusCode: 200, headers, body: JSON.stringify({ reply: finalResponse }) };
         }
 
-    } catch (error: any) {
+        const text = response.text();
+        return { statusCode: 200, headers, body: JSON.stringify({ reply: text }) };
+
+    } catch (error) {
         console.error("FATAL: Error during Gemini API call or tool execution.", error);
-        const errorReply = {
-            english: "I'm sorry, I encountered a system error. Please try again.",
-            telugu: "క్షమించండి, సిస్టమ్ లోపం ఎదురైంది. దయచేసి మళ్ళీ ప్రయత్నించండి."
-        };
-        return { statusCode: 500, headers, body: JSON.stringify({ reply: errorReply }) };
+        return { statusCode: 500, headers, body: JSON.stringify({ error: "Failed to process request." }) };
     }
 };
 
