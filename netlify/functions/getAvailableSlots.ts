@@ -28,7 +28,6 @@ const handler: Handler = async (event: HandlerEvent) => {
             return { statusCode: 404, headers, body: JSON.stringify({ success: false, message: `Could not find a doctor named ${doctorName}.` }) };
         }
 
-        // Fetch all confirmed appointments for this doctor on the given date
         const { data: bookedAppointments, error: bookedError } = await supabase
             .from('appointments')
             .select('appointment_time')
@@ -38,35 +37,48 @@ const handler: Handler = async (event: HandlerEvent) => {
 
         if (bookedError) throw bookedError;
 
-        // --- DYNAMIC LOGIC STARTS HERE ---
-        // 1. Define doctor's working hours and slot duration
+        // --- DYNAMIC LOGIC AND GROUPING STARTS HERE ---
         const dayStart = new Date(`${date}T09:00:00`);
         const dayEnd = new Date(`${date}T17:00:00`);
-        const slotDurationMinutes = 15; // Your 15-minute requirement
-
-        // 2. Create a fast way to check if a slot is booked
+        const slotDurationMinutes = 15;
         const bookedTimes = new Set(bookedAppointments.map(appt => appt.appointment_time));
         
-        // 3. Loop through the day and generate available slots
-        const availableSlots = [];
+        // 1. Create separate arrays for each part of the day
+        const morningSlots = [];
+        const afternoonSlots = [];
+        const eveningSlots = [];
+        
         let currentTime = dayStart;
 
         while (currentTime < dayEnd) {
-            // Exclude common lunch break (1:00 PM to 2:00 PM)
-            if (currentTime.getHours() !== 13) {
-                 const timeString = currentTime.toLocaleTimeString('en-GB'); // Format as "HH:mm:ss"
-
-                // If the current time slot is NOT in the set of booked times, it's available
+            if (currentTime.getHours() !== 13) { // Exclude 1 PM lunch break
+                const timeString = currentTime.toLocaleTimeString('en-GB');
                 if (!bookedTimes.has(timeString)) {
-                    availableSlots.push(currentTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }));
+                    const formattedTime = currentTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+                    // 2. Add the available slot to the correct group based on the hour
+                    const hour = currentTime.getHours();
+                    if (hour < 12) {
+                        morningSlots.push(formattedTime);
+                    } else if (hour >= 12 && hour < 16) { // 12 PM to 4 PM
+                        afternoonSlots.push(formattedTime);
+                    } else { // 4 PM onwards
+                        eveningSlots.push(formattedTime);
+                    }
                 }
             }
-            // Move to the next 15-minute slot for the next loop iteration
             currentTime.setMinutes(currentTime.getMinutes() + slotDurationMinutes);
         }
-        // --- DYNAMIC LOGIC ENDS HERE ---
 
-        return { statusCode: 200, headers, body: JSON.stringify({ success: true, availableSlots }) };
+        // 3. Combine the groups into a single object for the response
+        const groupedSlots = {
+            morning: morningSlots,
+            afternoon: afternoonSlots,
+            evening: eveningSlots
+        };
+        // --- DYNAMIC LOGIC AND GROUPING ENDS HERE ---
+
+        return { statusCode: 200, headers, body: JSON.stringify({ success: true, availableSlots: groupedSlots }) };
 
     } catch (error: any) {
         return { statusCode: 500, headers, body: JSON.stringify({ success: false, message: error.message }) };
