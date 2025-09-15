@@ -27,7 +27,7 @@ const handler: Handler = async (event: HandlerEvent) => {
 
         // --- CHANGE IS HERE ---
         // This new logic is much more flexible for searching names.
-        // It takes an input like "kss aditya" and searches for records containing BOTH "kss" AND "aditya".
+        // It takes an input like "aditya" and searches for records containing that word.
         if (doctorName) {
             const searchTerms = doctorName.trim().split(/\s+/).join(' & ');
             query = query.textSearch('name', searchTerms, {
