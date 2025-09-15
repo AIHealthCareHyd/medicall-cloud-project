@@ -1,9 +1,9 @@
 // FILE: netlify/functions/getTeluguSpeech.ts
-// This new function securely handles your Text-to-Speech API key.
+// This is the corrected version that securely uses the environment variable.
 
 import type { Handler, HandlerEvent } from '@netlify/functions';
 
-// IMPORTANT: Replace this with the actual API endpoint for your Text-to-Speech service.
+// You may need to update this if your Text-to-Speech service has a different endpoint.
 const TTS_API_ENDPOINT = 'https://api.texttospeechservice.com/v1/synthesize'; 
 
 const headers = {
@@ -17,7 +17,8 @@ const handler: Handler = async (event: HandlerEvent) => {
         return { statusCode: 200, headers };
     }
 
-    // Securely access the new API key you just added to Netlify.
+    // This is the SECURE way to access your key.
+    // It reads the value you saved in the Netlify UI.
     if (!process.env.TEXT_TO_SPEECH_API_KEY) {
         return { statusCode: 500, headers, body: JSON.stringify({ error: "Text-to-Speech API key not configured." }) };
     }
@@ -28,20 +29,19 @@ const handler: Handler = async (event: HandlerEvent) => {
             return { statusCode: 400, headers, body: JSON.stringify({ error: "No text provided to synthesize." }) };
         }
 
+        // The API key is securely referenced here.
         const apiKey = process.env.TEXT_TO_SPEECH_API_KEY;
 
-        // This is a standard request structure. You may need to adjust the body
-        // based on your specific API's documentation (e.g., voice ID, format).
         const response = await fetch(TTS_API_ENDPOINT, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}` // Common authorization method
+                'Authorization': `Bearer ${apiKey}`
             },
             body: JSON.stringify({
                 text: text,
-                voice: 'te-IN-Standard-A', // Example voice ID for Telugu
-                format: 'mp3' // Example audio format
+                voice: 'te-IN-Standard-A',
+                format: 'mp3'
             }),
         });
 
@@ -49,21 +49,17 @@ const handler: Handler = async (event: HandlerEvent) => {
             const errorBody = await response.text();
             throw new Error(`TTS API Error: ${response.status} - ${errorBody}`);
         }
-
-        // The API might return the audio data directly or a link to it.
-        // This example assumes it returns the audio data as a base64 string.
+        
         const audioBlob = await response.blob();
-        const reader = new FileReader();
-        const base64data = await new Promise((resolve, reject) => {
-            reader.onloadend = () => resolve(reader.result);
-            reader.onerror = reject;
-            reader.readAsDataURL(audioBlob);
-        });
+        
+        // This is a more robust way to handle the Blob-to-Base64 conversion in a serverless environment.
+        const buffer = Buffer.from(await audioBlob.arrayBuffer());
+        const base64data = `data:${audioBlob.type};base64,${buffer.toString('base64')}`;
 
         return {
             statusCode: 200,
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ audioContent: base64data }) // Sending audio back to the frontend
+            body: JSON.stringify({ audioContent: base64data })
         };
 
     } catch (error: any) {
@@ -73,3 +69,4 @@ const handler: Handler = async (event: HandlerEvent) => {
 };
 
 export { handler };
+
