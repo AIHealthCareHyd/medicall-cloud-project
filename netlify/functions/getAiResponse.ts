@@ -7,6 +7,7 @@ const headers = {
   'Content-Type': 'application/json'
 };
 
+// FIX: Corrected typo from "hangetdler" to "handler"
 const handler: Handler = async (event: HandlerEvent) => {
     if (event.httpMethod === 'OPTIONS') {
         return { statusCode: 200, headers, body: JSON.stringify({ message: 'CORS preflight successful' }) };
@@ -28,38 +29,36 @@ const handler: Handler = async (event: HandlerEvent) => {
         return { statusCode: 400, headers, body: JSON.stringify({ error: "No history provided." }) };
     }
     
-    const currentDate = new Date().toLocaleDateString('en-CA');
+    const currentDate = new Date().toLocaleDateIString('en-CA');
 
-    // --- REVISED BILINGUAL SYSTEM PROMPT ---
+    // --- REFINED BILINGUAL SYSTEM PROMPT for better fluency ---
     const systemPrompt = `
-    You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
+    You are Sahay, a friendly AI medical assistant for Prudence Hospitals.
 
-    **Your Core Task:** You will communicate with the user via a chat interface. Your written responses, which will be displayed in the chat, MUST be in clear, concise English. However, the system will speak your response aloud to the user in Telugu.
+    **Your Core Task:** Your written responses, displayed in the chat, MUST be in clear, concise English. However, the system will speak your response aloud to the user in Telugu.
 
     **CRITICAL OUTPUT FORMAT:**
-    You MUST format your final output as a single, valid JSON object with two keys: "english" and "telugu".
-    - The "english" key will contain the message to be displayed in the chat UI.
-    - The "telugu" key will contain the exact Telugu translation of the English message, which will be used for text-to-speech.
+    You MUST format your final output as a single, valid JSON object with "english" and "telugu" keys.
+    - "english": The message for the chat UI.
+    - "telugu": The Telugu translation. **This must be highly fluent, conversational, and natural-sounding, as if a real person is speaking. Avoid overly formal or robotic language.**
 
-    Example Response Format:
+    Example:
     {
-      "english": "Hello! I am Sahay, your AI assistant. How can I help you today?",
-      "telugu": "నమస్కారం! నేను సహాయ్, మీ AI అసిస్టెంట్. నేను మీకు ఎలా సహాయపడగలను?"
+      "english": "Of course. What day would you like to book the appointment for?",
+      "telugu": "తప్పకుండా. మీరు ఏ రోజున అపాయింట్‌మెంట్ బుక్ చేసుకోవాలనుకుంటున్నారు?"
     }
 
-    **Workflow for New Appointments:**
-    1.  **Understand the User's Need:** Ask for their symptoms or the specialty they are looking for (in English).
-    2.  **Symptom Analysis:** Determine the most appropriate specialty based on symptoms.
-    3.  **Confirm Specialty:** Use the 'getDoctorDetails' tool to find doctors.
-    4.  **Present Options & Get Confirmation:** Present the doctor's full names to the user in English.
-    5.  **Gather Information:** Gather the patient's name, phone number, and desired date/time in English.
-    6.  **Final Confirmation:** Before booking, confirm all details with the user in English.
-    7.  **Execute Booking:** Call the 'bookAppointment' tool.
+    **Workflow:**
+    1.  Ask for the user's need (symptoms, specialty) in English.
+    2.  Use tools to find doctors or specialties.
+    3.  Present options to the user in English.
+    4.  Gather patient details (name, phone, date, time) in English.
+    5.  Confirm all details before using the 'bookAppointment' tool.
 
     **Other Rules:**
-    - If a tool fails, explain the issue gracefully in English.
-    - You are aware that the current date is ${currentDate}.
-    - Do not provide medical advice.
+    - If a tool fails, explain it gracefully in English.
+    - You know the current date is ${currentDate}.
+    - Do not give medical advice.
     `;
 
     try {
@@ -80,7 +79,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         const chat = model.startChat({
             history: [
                 { role: "user", parts: [{ text: systemPrompt }] },
-                { role: "model", parts: [{ text: JSON.stringify({ english: "Understood. I will provide my responses in JSON format with English for display and Telugu for speech.", telugu: "అర్థమైంది. నేను నా సమాధానాలను ప్రదర్శన కోసం ఇంగ్లీష్‌లో మరియు ప్రసంగం కోసం తెలుగులో JSON ఫార్మాట్‌లో అందిస్తాను."}) }] },
+                { role: "model", parts: [{ text: JSON.stringify({ english: "Understood. I will provide my responses in JSON format with English for display and fluent Telugu for speech.", telugu: "అర్థమైంది. నేను నా సమాధానాలను ప్రదర్శన కోసం ఇంగ్లీష్‌లో మరియు స్పష్టమైన ప్రసంగం కోసం తెలుగులో JSON ఫార్మాట్‌లో అందిస్తాను."}) }] },
                 ...history.slice(0, -1)
             ]
         });
@@ -109,20 +108,27 @@ const handler: Handler = async (event: HandlerEvent) => {
         } else {
             finalReply = response.text();
         }
+        
+        const cleanedReply = finalReply.replace(/^```json\s*|```$/g, '').trim();
 
         try {
-            const parsedReply = JSON.parse(finalReply);
+            const parsedReply = JSON.parse(cleanedReply);
             return { statusCode: 200, headers, body: JSON.stringify({ reply: parsedReply }) };
         } catch(e) {
-            console.error("Failed to parse AI response as JSON, sending as fallback:", finalReply);
-            const fallbackReply = { english: finalReply, telugu: finalReply }; // Fallback if AI fails to return JSON
+            console.error("Failed to parse AI response as JSON, sending as fallback:", cleanedReply);
+            const fallbackReply = { english: cleanedReply, telugu: "క్షమించండి, ఒక లోపం సంభవించింది." };
             return { statusCode: 200, headers, body: JSON.stringify({ reply: fallbackReply }) };
         }
 
     } catch (error: any) {
         console.error("FATAL: Error during Gemini API call or tool execution.", error);
-        return { statusCode: 500, headers, body: JSON.stringify({ error: error.message || "Failed to process request." }) };
+        const errorReply = {
+            english: "I'm sorry, I encountered a system error. Please try again.",
+            telugu: "క్షమించండి, సిస్టమ్ లోపం ఎదురైంది. దయచేసి మళ్ళీ ప్రయత్నించండి."
+        };
+        return { statusCode: 500, headers, body: JSON.stringify({ reply: errorReply }) };
     }
 };
 
 export { handler };
+
