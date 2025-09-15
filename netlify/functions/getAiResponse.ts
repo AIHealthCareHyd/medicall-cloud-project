@@ -29,7 +29,8 @@ const handler: Handler = async (event: HandlerEvent) => {
         return { statusCode: 400, headers, body: JSON.stringify({ error: "No history provided." }) };
     }
     
-    const currentDate = new Date().toLocaleDateIString('en-CA');
+    // FIX: Corrected typo from "toLocaleDateIString" to "toLocaleDateString"
+    const currentDate = new Date().toLocaleDateString('en-CA');
 
     // --- REFINED BILINGUAL SYSTEM PROMPT for better fluency ---
     const systemPrompt = `
