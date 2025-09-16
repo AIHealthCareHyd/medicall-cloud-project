@@ -22,9 +22,11 @@ const handler: Handler = async (event: HandlerEvent) => {
         let query = supabase.from('doctors').select('name, specialty');
 
         // --- CHANGE IS HERE: Upgraded the specialty search to be more flexible ---
-        // This will now correctly match "radiologist" to the "Radiology" specialty.
+        // This will now correctly match a symptom like "broken bone" (which the AI will interpret as 'orthopedics')
+        // to the "Orthopaedics" specialty in your Supabase table.
         if (specialty) {
-            query = query.textSearch('specialty', specialty.trim(), {
+            const searchTerms = specialty.trim().split(/\s+/).join(' | '); // Use OR for specialty words
+            query = query.textSearch('specialty', searchTerms, {
                 type: 'websearch',
                 config: 'english'
             });
@@ -32,7 +34,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         // --- END OF CHANGE ---
 
         if (doctorName) {
-            const searchTerms = doctorName.trim().split(/\s+/).join(' & ');
+            const searchTerms = doctorName.trim().split(/\s+/).join(' & '); // Use AND for doctor names
             query = query.textSearch('name', searchTerms, {
                 type: 'websearch',
                 config: 'english'
