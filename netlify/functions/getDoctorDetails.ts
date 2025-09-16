@@ -18,15 +18,36 @@ const handler: Handler = async (event: HandlerEvent) => {
     try {
         const { specialty, doctorName } = JSON.parse(event.body || '{}');
         const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+        
         let query = supabase.from('doctors').select('name, specialty');
-        if (specialty) query = query.ilike('specialty', `%${specialty}%`);
-        if (doctorName) query = query.ilike('name', `%${doctorName}%`);
+
+        // --- CHANGE IS HERE: Upgraded the specialty search to be more flexible ---
+        // This will now correctly match "radiologist" to the "Radiology" specialty.
+        if (specialty) {
+            query = query.textSearch('specialty', specialty.trim(), {
+                type: 'websearch',
+                config: 'english'
+            });
+        }
+        // --- END OF CHANGE ---
+
+        if (doctorName) {
+            const searchTerms = doctorName.trim().split(/\s+/).join(' & ');
+            query = query.textSearch('name', searchTerms, {
+                type: 'websearch',
+                config: 'english'
+            });
+        }
+
         const { data, error } = await query;
         if (error) throw error;
+        
         return { statusCode: 200, headers, body: JSON.stringify({ doctors: data }) };
+
     } catch (error: any) {
         return { statusCode: 500, headers, body: JSON.stringify({ success: false, message: error.message }) };
     }
 };
 
 export { handler };
+
