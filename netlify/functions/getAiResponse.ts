@@ -8,8 +8,8 @@ const headers = {
   'Content-Type': 'application/json'
 };
 
-// --- NEW HELPER FUNCTION TO GET DATES ---
-const getFormattedDate = (date) => {
+// --- HELPER FUNCTION TO GET DATES ---
+const getFormattedDate = (date: Date): string => {
     return date.toISOString().split('T')[0]; // Returns YYYY-MM-DD
 }
 
@@ -33,30 +33,26 @@ const handler: Handler = async (event: HandlerEvent) => {
         return { statusCode: 400, headers, body: JSON.stringify({ error: "No history provided." }) };
     }
     
-    // --- CHANGE IS HERE: Provide more date context to the AI ---
     const today = new Date();
     const tomorrow = new Date();
     tomorrow.setDate(today.getDate() + 1);
 
     const todayStr = getFormattedDate(today);
     const tomorrowStr = getFormattedDate(tomorrow);
-    // --- END OF CHANGE ---
 
-    // --- REVISED SYSTEM PROMPT ---
+    // --- REVISED AND MORE ROBUST SYSTEM PROMPT ---
     const systemPrompt = `
     You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
 
-    **Date and Time Awareness (CRITICAL):**
-    - Today's date is ${todayStr}.
-    - Tomorrow's date is ${tomorrowStr}.
-    - **Before you call ANY tool that requires a date (like 'getAvailableSlots'), you MUST convert natural language dates (e.g., "tomorrow", "sep 19", "next monday") into the strict 'YYYY-MM-DD' format.**
-    - If the user provides a vague date, you must ask for clarification until you have a specific date in the correct format.
+    **Core Rules (Follow these strictly):**
+    1.  **NEVER call a tool with missing information.** If a user asks a vague question like "which doctor is available?", you MUST ask for the required specialty first. Do not guess.
+    2.  **Date Conversion is MANDATORY.** You are aware that today is ${todayStr} and tomorrow is ${tomorrowStr}. Before you call ANY tool that requires a date (like 'getAvailableSlots'), you MUST first convert any natural language from the user (e.g., "tomorrow", "sep 19", "next monday") into the strict 'YYYY-MM-DD' format. If you are unsure of the exact date, you must ask for clarification.
 
     **Workflow for New Appointments:**
     1.  **Understand Need:** Ask for symptoms or specialty.
     2.  **Find Doctor:** Use 'getDoctorDetails' to find a doctor.
-    3.  **Get Date:** Ask the user for their preferred date. Convert their response to YYYY-MM-DD format.
-    4.  **Check Schedule:** Use 'getAvailableSlots' with the formatted date to see the doctor's schedule.
+    3.  **Get Date:** Ask the user for their preferred date. **Convert their response to YYYY-MM-DD format.**
+    4.  **Check Schedule:** Use 'getAvailableSlots' with the **formatted date** to see the doctor's schedule.
     5.  **Present Available Times:** Show the list of available time slots to the user.
     6.  **Gather Final Details & Confirm:** Get the patient's name and phone, then confirm all details.
     7.  **Execute Booking:** Call the 'bookAppointment' tool.
@@ -85,7 +81,8 @@ const handler: Handler = async (event: HandlerEvent) => {
         const chat = model.startChat({
             history: [
                 { role: "user", parts: [{ text: systemPrompt }] },
-                { role: "model", parts: [{ text: "Understood. I will convert all dates to YYYY-MM-DD format before using my tools. How can I assist?" }] },
+                // --- Updated initial response to reinforce the new rules ---
+                { role: "model", parts: [{ text: "Understood. I will always ask for required information and will convert all dates to YYYY-MM-DD format before using my tools. How can I assist you?" }] },
                 ...history.slice(0, -1)
             ]
         });
@@ -107,6 +104,10 @@ const handler: Handler = async (event: HandlerEvent) => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(call.args),
             });
+             if (!toolResponse.ok) {
+                // Throw an error that includes the status to give the AI more context.
+                throw new Error(`Tool call to ${call.name} failed with status ${toolResponse.status}`);
+            }
             toolResult = await toolResponse.json();
 
             const result2 = await chat.sendMessage([{ functionResponse: { name: call.name, response: toolResult } }]);
@@ -119,8 +120,11 @@ const handler: Handler = async (event: HandlerEvent) => {
 
     } catch (error) {
         console.error("FATAL: Error during Gemini API call or tool execution.", error);
-        return { statusCode: 500, headers, body: JSON.stringify({ error: "Failed to process request." }) };
+        return { statusCode: 500, headers, body: JSON.stringify({ error: `Failed to process request.` }) };
     }
 };
 
 export { handler };
+
+
+
