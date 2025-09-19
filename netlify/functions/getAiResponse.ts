@@ -8,7 +8,6 @@ const headers = {
   'Content-Type': 'application/json'
 };
 
-// --- HELPER FUNCTION TO GET DATES ---
 const getFormattedDate = (date: Date): string => {
     return date.toISOString().split('T')[0]; // Returns YYYY-MM-DD
 }
@@ -40,19 +39,21 @@ const handler: Handler = async (event: HandlerEvent) => {
     const todayStr = getFormattedDate(today);
     const tomorrowStr = getFormattedDate(tomorrow);
 
-    // --- REVISED AND MORE ROBUST SYSTEM PROMPT ---
+    // --- REVISED SYSTEM PROMPT FOR NATURAL CONVERSATION ---
     const systemPrompt = `
     You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
 
-    **Core Rules (Follow these strictly):**
-    1.  **NEVER call a tool with missing information.** If a user asks a vague question like "which doctor is available?", you MUST ask for the required specialty first. Do not guess.
-    2.  **Date Conversion is MANDATORY.** You are aware that today is ${todayStr} and tomorrow is ${tomorrowStr}. Before you call ANY tool that requires a date (like 'getAvailableSlots'), you MUST first convert any natural language from the user (e.g., "tomorrow", "sep 19", "next monday") into the strict 'YYYY-MM-DD' format. If you are unsure of the exact date, you must ask for clarification.
+    **Internal Rules & Date Handling (CRITICAL):**
+    - Today's date is ${todayStr}.
+    - Tomorrow's date is ${tomorrowStr}.
+    - When the user gives you a date in natural language (e.g., "tomorrow", "sep 19"), you MUST silently and internally convert it to the strict 'YYYY-MM-DD' format before calling any tools.
+    - **NEVER mention the 'YYYY-MM-DD' format or your internal date conversion process to the user.** Keep the conversation natural and user-friendly.
 
     **Workflow for New Appointments:**
     1.  **Understand Need:** Ask for symptoms or specialty.
     2.  **Find Doctor:** Use 'getDoctorDetails' to find a doctor.
-    3.  **Get Date:** Ask the user for their preferred date. **Convert their response to YYYY-MM-DD format.**
-    4.  **Check Schedule:** Use 'getAvailableSlots' with the **formatted date** to see the doctor's schedule.
+    3.  **Get Date:** Ask the user naturally for their preferred date. For example: "What date works best for you?" or "When would you like to come in?".
+    4.  **Check Schedule:** Internally convert the user's response to YYYY-MM-DD and then use 'getAvailableSlots'.
     5.  **Present Available Times:** Show the list of available time slots to the user.
     6.  **Gather Final Details & Confirm:** Get the patient's name and phone, then confirm all details.
     7.  **Execute Booking:** Call the 'bookAppointment' tool.
@@ -81,8 +82,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         const chat = model.startChat({
             history: [
                 { role: "user", parts: [{ text: systemPrompt }] },
-                // --- Updated initial response to reinforce the new rules ---
-                { role: "model", parts: [{ text: "Understood. I will always ask for required information and will convert all dates to YYYY-MM-DD format before using my tools. How can I assist you?" }] },
+                { role: "model", parts: [{ text: "Understood. I will handle dates internally and keep the conversation natural. How can I assist?" }] },
                 ...history.slice(0, -1)
             ]
         });
@@ -105,7 +105,6 @@ const handler: Handler = async (event: HandlerEvent) => {
                 body: JSON.stringify(call.args),
             });
              if (!toolResponse.ok) {
-                // Throw an error that includes the status to give the AI more context.
                 throw new Error(`Tool call to ${call.name} failed with status ${toolResponse.status}`);
             }
             toolResult = await toolResponse.json();
@@ -125,6 +124,4 @@ const handler: Handler = async (event: HandlerEvent) => {
 };
 
 export { handler };
-
-
 
