@@ -1,6 +1,5 @@
 // FILE: netlify/functions/getAiResponse.ts
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { createClient } from '@supabase/supabase-js'; // Import Supabase client
 import type { Handler, HandlerEvent } from '@netlify/functions';
 
 const headers = {
@@ -10,7 +9,7 @@ const headers = {
 };
 
 const getFormattedDate = (date: Date): string => {
-    return date.toISOString().split('T')[0];
+    return date.toISOString().split('T')[0]; // Returns YYYY-MM-DD
 }
 
 const handler: Handler = async (event: HandlerEvent) => {
@@ -18,10 +17,9 @@ const handler: Handler = async (event: HandlerEvent) => {
         return { statusCode: 200, headers, body: JSON.stringify({ message: 'CORS preflight successful' }) };
     }
 
-    if (!process.env.GEMINI_API_KEY || !process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
-        return { statusCode: 500, headers, body: JSON.stringify({ error: "Configuration error." }) };
+    if (!process.env.GEMINI_API_KEY) {
+        return { statusCode: 500, headers, body: JSON.stringify({ error: "AI configuration error." }) };
     }
-    
     let body;
     try {
         body = JSON.parse(event.body || '{}');
@@ -34,48 +32,43 @@ const handler: Handler = async (event: HandlerEvent) => {
         return { statusCode: 400, headers, body: JSON.stringify({ error: "No history provided." }) };
     }
     
+    const today = new Date();
+    const tomorrow = new Date();
+    tomorrow.setDate(today.getDate() + 1);
+
+    const todayStr = getFormattedDate(today);
+    const tomorrowStr = getFormattedDate(tomorrow);
+
+    // --- REVISED SYSTEM PROMPT WITH MORE ROBUST INSTRUCTIONS ---
+    const systemPrompt = `
+    You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
+
+    **Internal Rules & Date/Time Handling (CRITICAL):**
+    - Today's date is ${todayStr}. Tomorrow's date is ${tomorrowStr}.
+    - When a user gives you a date and time together (e.g., "tomorrow at 1 o'clock", "sep 20 at 2:30 pm"), you MUST correctly parse BOTH the date and the time.
+    - Before calling any tool, you MUST convert the date to 'YYYY-MM-DD' format and the time to 'HH:MM' format (24-hour clock).
+    - NEVER mention date or time formats to the user. Keep the conversation natural.
+
+    **Error Handling (CRITICAL):**
+    - If a tool call fails (e.g., you receive a 500 or 400 error), **do not show the user the technical error message.** Instead, apologize gracefully and provide helpful guidance. For example: "I'm sorry, there seems to be a technical issue checking the schedule right now. Could you please try a different date, or perhaps another doctor?"
+
+    **Workflow for New Appointments (Follow this order STRICTLY):**
+    1.  **Understand Need:** Ask for symptoms or specialty.
+    2.  **Find & Confirm Doctor:** Use 'getDoctorDetails' to find doctors. You MUST get the user to confirm a specific doctor before proceeding.
+    3.  **Get Date & Time:** Ask the user for their preferred date and time.
+    4.  **Check Schedule:** Internally convert the date and time to the correct formats, then use 'getAvailableSlots'.
+    5.  **Present Times & Gather Details:** Present the available slots, and once the user chooses, get their name and phone.
+    6.  **Final Confirmation & Booking:** Confirm all details, then call the 'bookAppointment' tool.
+    `;
+
     try {
-        const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
-        const { data: specialtiesData, error: specialtiesError } = await supabase.from('doctors').select('specialty');
-        if (specialtiesError) throw specialtiesError;
-        const specialtyList = [...new Set(specialtiesData.map(doc => doc.specialty))];
-        const specialtyListString = specialtyList.join(', ');
-
-        const today = new Date();
-        const tomorrow = new Date();
-        tomorrow.setDate(today.getDate() + 1);
-        const todayStr = getFormattedDate(today);
-        const tomorrowStr = getFormattedDate(tomorrow);
-
-        // --- CHANGE IS HERE: Updated the workflow for more confident matching ---
-        const systemPrompt = `
-        You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
-
-        **List of Available Specialties:**
-        Here are the only specialties available at the hospital: [${specialtyListString}]
-
-        **Internal Rules & Date Handling (CRITICAL):**
-        - Today's date is ${todayStr}. Tomorrow's date is ${tomorrowStr}.
-        - You MUST silently convert natural language dates (e.g., "tomorrow") to 'YYYY-MM-DD' format before calling tools.
-        - NEVER mention the 'YYYY-MM-DD' format to the user. Keep the conversation natural.
-
-        **Workflow for New Appointments:**
-        1.  **Understand Need:** Ask for symptoms or specialty.
-        2.  **Match Specialty (CRITICAL STEP):** Look at the user's request (e.g., "gastentrology") and find the **closest match** from the 'List of Available Specialties' above. You must **confidently assume this match is correct** and proceed directly to the next step without asking the user for confirmation.
-        3.  **Find Doctor:** Use the 'getDoctorDetails' tool with the **exact specialty string** you chose from the list.
-        4.  **Present Options & Get Confirmation:** Present the doctor options to the user. You MUST get the user to confirm a specific doctor before proceeding.
-        5.  **Get Date:** Once the doctor is confirmed, ask the user for their preferred date.
-        6.  **Check Schedule:** Internally convert the date and use 'getAvailableSlots'.
-        7.  **Present Times & Gather Details:** Present the available slots, and once the user chooses, get their name and phone.
-        8.  **Final Confirmation & Booking:** Confirm all details, then call the 'bookAppointment' tool.
-        `;
-
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
         const model = genAI.getGenerativeModel({ 
             model: "gemini-1.5-flash",
             tools: [{
                 functionDeclarations: [
                     { name: "getAvailableSlots", description: "Gets available time slots for a doctor on a given date.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, date: { type: "STRING" } }, required: ["doctorName", "date"] } },
+                    { name: "getAllSpecialties", description: "Gets a list of all unique medical specialties available at the hospital.", parameters: { type: "OBJECT", properties: {} } },
                     { name: "getDoctorDetails", description: "Finds doctors by specialty or name.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, specialty: { type: "STRING" } } } },
                     { name: "bookAppointment", description: "Books a medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, phone: { type: "STRING" }, date: { type: "STRING" }, time: { type: "STRING" } }, required: ["doctorName", "patientName", "phone", "date", "time"] } },
                 ],
@@ -85,7 +78,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         const chat = model.startChat({
             history: [
                 { role: "user", parts: [{ text: systemPrompt }] },
-                { role: "model", parts: [{ text: "Understood. I will confidently match specialties and proceed without confirmation. How can I assist?" }] },
+                { role: "model", parts: [{ text: "Understood. I will handle dates and times internally and provide user-friendly error messages. How can I assist?" }] },
                 ...history.slice(0, -1)
             ]
         });
@@ -108,9 +101,11 @@ const handler: Handler = async (event: HandlerEvent) => {
                 body: JSON.stringify(call.args),
             });
              if (!toolResponse.ok) {
-                throw new Error(`Tool call to ${call.name} failed with status ${toolResponse.status}`);
+                // Pass a structured error back to the AI for better context
+                toolResult = { error: `Tool call failed with status ${toolResponse.status}` };
+            } else {
+                 toolResult = await toolResponse.json();
             }
-            toolResult = await toolResponse.json();
 
             const result2 = await chat.sendMessage([{ functionResponse: { name: call.name, response: toolResult } }]);
             const finalResponse = result2.response.text();
@@ -127,3 +122,4 @@ const handler: Handler = async (event: HandlerEvent) => {
 };
 
 export { handler };
+
