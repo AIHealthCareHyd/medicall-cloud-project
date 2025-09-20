@@ -35,13 +35,11 @@ const handler: Handler = async (event: HandlerEvent) => {
     }
     
     try {
-        // --- CHANGE IS HERE: Fetch specialties dynamically before building the prompt ---
         const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
         const { data: specialtiesData, error: specialtiesError } = await supabase.from('doctors').select('specialty');
         if (specialtiesError) throw specialtiesError;
         const specialtyList = [...new Set(specialtiesData.map(doc => doc.specialty))];
         const specialtyListString = specialtyList.join(', ');
-        // --- END OF CHANGE ---
 
         const today = new Date();
         const tomorrow = new Date();
@@ -49,6 +47,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         const todayStr = getFormattedDate(today);
         const tomorrowStr = getFormattedDate(tomorrow);
 
+        // --- CHANGE IS HERE: Updated the workflow for more confident matching ---
         const systemPrompt = `
         You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
 
@@ -60,14 +59,15 @@ const handler: Handler = async (event: HandlerEvent) => {
         - You MUST silently convert natural language dates (e.g., "tomorrow") to 'YYYY-MM-DD' format before calling tools.
         - NEVER mention the 'YYYY-MM-DD' format to the user. Keep the conversation natural.
 
-        **Workflow for New Appointments (Follow this order STRICTLY):**
+        **Workflow for New Appointments:**
         1.  **Understand Need:** Ask for symptoms or specialty.
-        2.  **Match Specialty (CRITICAL STEP):** Look at the user's request and find the **closest match** from the 'List of Available Specialties' above. For example, if the user says "stomach doctor" or "gastroenterologist", you must choose "Surgical Gastroenterology" from the list.
-        3.  **Find & Confirm Doctor:** Use the 'getDoctorDetails' tool with the **exact specialty string** you chose from the list. Present the options to the user. **You MUST get the user to confirm a specific doctor before proceeding.**
-        4.  **Get Date:** Once the doctor is confirmed, ask the user for their preferred date.
-        5.  **Check Schedule:** Internally convert the date and use 'getAvailableSlots'.
-        6.  **Present Times & Gather Details:** Present the available slots, and once the user chooses, get their name and phone.
-        7.  **Final Confirmation & Booking:** Confirm all details, then call the 'bookAppointment' tool.
+        2.  **Match Specialty (CRITICAL STEP):** Look at the user's request (e.g., "gastentrology") and find the **closest match** from the 'List of Available Specialties' above. You must **confidently assume this match is correct** and proceed directly to the next step without asking the user for confirmation.
+        3.  **Find Doctor:** Use the 'getDoctorDetails' tool with the **exact specialty string** you chose from the list.
+        4.  **Present Options & Get Confirmation:** Present the doctor options to the user. You MUST get the user to confirm a specific doctor before proceeding.
+        5.  **Get Date:** Once the doctor is confirmed, ask the user for their preferred date.
+        6.  **Check Schedule:** Internally convert the date and use 'getAvailableSlots'.
+        7.  **Present Times & Gather Details:** Present the available slots, and once the user chooses, get their name and phone.
+        8.  **Final Confirmation & Booking:** Confirm all details, then call the 'bookAppointment' tool.
         `;
 
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -75,12 +75,9 @@ const handler: Handler = async (event: HandlerEvent) => {
             model: "gemini-1.5-flash",
             tools: [{
                 functionDeclarations: [
-                    { name: "getAvailableSlots", description: "Gets the available appointment time slots for a specific doctor on a given date.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, date: { type: "STRING" } }, required: ["doctorName", "date"] } },
-                    { name: "getAllSpecialties", description: "Gets a list of all unique medical specialties available at the hospital.", parameters: { type: "OBJECT", properties: {} } },
+                    { name: "getAvailableSlots", description: "Gets available time slots for a doctor on a given date.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, date: { type: "STRING" } }, required: ["doctorName", "date"] } },
                     { name: "getDoctorDetails", description: "Finds doctors by specialty or name.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, specialty: { type: "STRING" } } } },
                     { name: "bookAppointment", description: "Books a medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, phone: { type: "STRING" }, date: { type: "STRING" }, time: { type: "STRING" } }, required: ["doctorName", "patientName", "phone", "date", "time"] } },
-                    { name: "cancelAppointment", description: "Cancels an existing medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, date: { type: "STRING" } }, required: ["doctorName", "patientName", "date"] } },
-                    { name: "rescheduleAppointment", description: "Reschedules an existing medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, oldDate: { type: "STRING" }, newDate: { type: "STRING" }, newTime: { type: "STRING" } }, required: ["doctorName", "patientName", "oldDate", "newDate", "newTime"] } },
                 ],
             }],
         }); 
@@ -88,7 +85,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         const chat = model.startChat({
             history: [
                 { role: "user", parts: [{ text: systemPrompt }] },
-                { role: "model", parts: [{ text: "Understood. I will use the provided list to match specialties before searching. How can I assist?" }] },
+                { role: "model", parts: [{ text: "Understood. I will confidently match specialties and proceed without confirmation. How can I assist?" }] },
                 ...history.slice(0, -1)
             ]
         });
@@ -130,4 +127,3 @@ const handler: Handler = async (event: HandlerEvent) => {
 };
 
 export { handler };
-
