@@ -16,14 +16,13 @@ const handler: Handler = async (event: HandlerEvent) => {
         return { statusCode: 500, headers, body: JSON.stringify({ error: "Database configuration error." }) };
     }
     try {
-        const { doctorName, date } = JSON.parse(event.body || '{}');
+        const { doctorName, date, timeOfDay } = JSON.parse(event.body || '{}');
         if (!doctorName || !date) {
             return { statusCode: 400, headers, body: JSON.stringify({ error: "Doctor name and date are required." }) };
         }
 
         const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
-        // First, get the doctor's ID and their specific working hours from the database
         const { data: doctorData, error: doctorError } = await supabase
             .from('doctors')
             .select('id, working_hours_start, working_hours_end')
@@ -35,23 +34,17 @@ const handler: Handler = async (event: HandlerEvent) => {
         }
         
         if (!doctorData.working_hours_start || !doctorData.working_hours_end) {
-             return { statusCode: 404, headers, body: JSON.stringify({ success: false, message: `Schedule not found for ${doctorName}. Please ensure working hours are set in the database.` }) };
+             return { statusCode: 404, headers, body: JSON.stringify({ success: false, message: `Schedule not found for ${doctorName}.` }) };
         }
 
-        // Dynamically generate all possible 30-minute slots based on the doctor's unique schedule
         const allPossibleSlots = [];
-        const slotDuration = 30; // 30 minutes
+        const slotDuration = 30;
         const [startHour, startMinute] = doctorData.working_hours_start.split(':').map(Number);
         const [endHour, endMinute] = doctorData.working_hours_end.split(':').map(Number);
-
-        let currentHour = startHour;
-        let currentMinute = startMinute;
+        let currentHour = startHour, currentMinute = startMinute;
 
         while (currentHour < endHour || (currentHour === endHour && currentMinute < endMinute)) {
-            const hourString = String(currentHour).padStart(2, '0');
-            const minuteString = String(currentMinute).padStart(2, '0');
-            allPossibleSlots.push(`${hourString}:${minuteString}`);
-
+            allPossibleSlots.push(`${String(currentHour).padStart(2, '0')}:${String(currentMinute).padStart(2, '0')}`);
             currentMinute += slotDuration;
             if (currentMinute >= 60) {
                 currentHour++;
@@ -59,7 +52,6 @@ const handler: Handler = async (event: HandlerEvent) => {
             }
         }
 
-        // Find all confirmed appointments for this doctor on the given date
         const { data: bookedAppointments, error: bookedError } = await supabase
             .from('appointments')
             .select('appointment_time')
@@ -68,13 +60,34 @@ const handler: Handler = async (event: HandlerEvent) => {
             .eq('status', 'confirmed');
 
         if (bookedError) throw bookedError;
-
         const bookedTimes = bookedAppointments.map(appt => appt.appointment_time.substring(0, 5));
-        
-        // Filter the possible slots to find only the available ones
         const availableSlots = allPossibleSlots.filter(slot => !bookedTimes.includes(slot));
 
-        return { statusCode: 200, headers, body: JSON.stringify({ success: true, availableSlots }) };
+        const availableMorning = availableSlots.filter(slot => parseInt(slot.split(':')[0]) < 12);
+        const availableAfternoon = availableSlots.filter(slot => parseInt(slot.split(':')[0]) >= 12 && parseInt(slot.split(':')[0]) < 17);
+        const availableEvening = availableSlots.filter(slot => parseInt(slot.split(':')[0]) >= 17);
+
+        // If the AI is checking for general periods, return which ones have openings.
+        if (!timeOfDay) {
+            const availablePeriods = [];
+            if (availableMorning.length > 0) availablePeriods.push('morning');
+            if (availableAfternoon.length > 0) availablePeriods.push('afternoon');
+            if (availableEvening.length > 0) availablePeriods.push('evening');
+            return { statusCode: 200, headers, body: JSON.stringify({ success: true, availablePeriods }) };
+        }
+
+        // If the AI specifies a time of day, return the specific slots.
+        if (timeOfDay.toLowerCase() === 'morning') {
+            return { statusCode: 200, headers, body: JSON.stringify({ success: true, availableSlots: availableMorning }) };
+        }
+        if (timeOfDay.toLowerCase() === 'afternoon') {
+            return { statusCode: 200, headers, body: JSON.stringify({ success: true, availableSlots: availableAfternoon }) };
+        }
+        if (timeOfDay.toLowerCase() === 'evening') {
+            return { statusCode: 200, headers, body: JSON.stringify({ success: true, availableSlots: availableEvening }) };
+        }
+
+        return { statusCode: 400, headers, body: JSON.stringify({ success: false, message: "Invalid time of day specified." }) };
 
     } catch (error: any) {
         console.error("Error in getAvailableSlots:", error);
