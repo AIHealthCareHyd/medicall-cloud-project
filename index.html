@@ -8,7 +8,6 @@
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Icon library for send/mic icons -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
 </head>
 <body class="bg-gray-100">
@@ -16,17 +15,16 @@
     <div id="root"></div>
 
     <script type="text/babel">
-
         const { useState, useEffect, useRef } = React;
 
         function App() {
             const [conversation, setConversation] = useState([
-                { role: 'model', text: "Welcome to Prudence Hospitals. I'm Sahay, your AI assistant. How can I help you today?" }
+                // The initial greeting is now in Telugu
+                { role: 'model', text: "నమస్కారం! నేను సహాయ్, మీ AI ఆరోగ్య సహాయకుడిని. నేను మీకు ఎలా సహాయపడగలను?" }
             ]);
-            const [status, setStatus] = useState('idle'); // idle, listening, thinking, speaking
+            const [status, setStatus] = useState('idle');
             const [isListeningActive, setIsListeningActive] = useState(false);
             const [inputText, setInputText] = useState('');
-            
             const recognitionRef = useRef(null);
             const conversationEndRef = useRef(null);
 
@@ -45,8 +43,13 @@
                     const utterance = new SpeechSynthesisUtterance(text);
                     const voices = window.speechSynthesis.getVoices();
                     if (voices.length > 0) {
-                        const femaleVoice = voices.find(voice => voice.lang.startsWith('en') && (voice.gender === 'female' || voice.name.includes('Female')));
-                        if (femaleVoice) utterance.voice = femaleVoice;
+                        // Find a Telugu voice
+                        const teluguVoice = voices.find(voice => voice.lang === 'te-IN');
+                        if (teluguVoice) {
+                            utterance.voice = teluguVoice;
+                        } else {
+                            console.warn("Telugu voice (te-IN) not found. Using default voice.");
+                        }
                     }
                     utterance.onend = () => {
                         setStatus('idle');
@@ -63,7 +66,6 @@
             
             const getAiReply = async (currentConversation) => {
                 setStatus('thinking');
-                
                 const historyForApi = currentConversation.map(turn => ({
                     role: turn.role,
                     parts: [{ text: turn.text }]
@@ -84,23 +86,16 @@
                     }
 
                     const data = await response.json();
-                    const aiReplyText = data.reply || "Sorry, I had trouble understanding that.";
+                    const aiReplyText = data.reply || "క్షమించండి, నాకు అర్థం కాలేదు.";
                     
-                    let textForSpeech = aiReplyText;
-                    textForSpeech = textForSpeech.replace(/[*#]/g, ''); 
-                    textForSpeech = textForSpeech.replace(/\b\d{7,}\b/g, (match) => {
-                        let spacedNumber = match.split('').join(' ');
-                        return spacedNumber.replace(/0/g, 'zero');
-                    });
-
                     setConversation(prev => [...prev, { role: 'model', text: aiReplyText }]);
-                    await speak(textForSpeech);
-
+                    await speak(aiReplyText);
+                    
                 } catch (error) {
                     console.error("Error fetching AI response:", error);
-                    const errorText = `There was an error: ${error.message}`;
+                    const errorText = `An error occurred: ${error.message}`;
                     setConversation(prev => [...prev, { role: 'model', text: errorText }]);
-                    await speak(errorText).catch(e => console.error("Error speaking the error message:", e));
+                    await speak("క్షమించండి, ఒక లోపం సంభవించింది.").catch(e => console.error("Error speaking the error message:", e));
                 }
             };
 
@@ -108,7 +103,6 @@
                 e.preventDefault();
                 const trimmedInput = inputText.trim();
                 if (!trimmedInput) return;
-
                 const newConversation = [...conversation, { role: 'user', text: trimmedInput }];
                 setConversation(newConversation);
                 setInputText('');
@@ -116,19 +110,15 @@
             };
 
             const toggleListening = () => {
-                const currentlyActive = !isListeningActive;
-                setIsListeningActive(currentlyActive);
-
-                if (currentlyActive) {
-                    if (recognitionRef.current) {
-                        // --- CHANGE IS HERE: Optimistic UI Update ---
-                        // Set the status to 'listening' immediately on click for a more responsive feel.
-                        setStatus('listening');
-                        recognitionRef.current.start();
-                    }
+                if (isListeningActive) {
+                    recognitionRef.current?.stop();
                 } else {
-                    if (recognitionRef.current) {
-                        recognitionRef.current.stop();
+                    setStatus('listening');
+                    try {
+                        recognitionRef.current?.start();
+                    } catch(e) {
+                        console.error("Error starting recognition:", e);
+                        setStatus('idle');
                     }
                 }
             };
@@ -141,43 +131,33 @@
                 }
 
                 if (!recognitionRef.current) {
-                    recognitionRef.current = new SpeechRecognition();
-                    recognitionRef.current.continuous = true;
-                    recognitionRef.current.interimResults = false;
+                    const recognition = new SpeechRecognition();
+                    recognition.continuous = false; // Use single-shot for better control
+                    recognition.interimResults = false;
+                    // Tell the browser to listen for Telugu
+                    recognition.lang = 'te-IN';
+                    recognitionRef.current = recognition;
                 }
                 
                 const recognition = recognitionRef.current;
 
-                // This event handler remains as a reliable source of truth for the listening state.
-                recognition.onstart = () => setStatus('listening');
+                recognition.onstart = () => {
+                    setIsListeningActive(true);
+                    setStatus('listening');
+                };
 
                 recognition.onend = () => {
-                    if (isListeningActive && status !== 'thinking' && status !== 'speaking') {
-                        console.log("Recognition ended, restarting...");
-                        try {
-                            recognition.start();
-                        } catch (e) {
-                            console.error("Error restarting recognition onend:", e);
-                            setStatus('idle');
-                        }
-                    } else if (!isListeningActive) {
-                        setStatus('idle');
-                    }
+                    setIsListeningActive(false);
+                    setStatus('idle');
                 };
 
                 recognition.onerror = (event) => {
                     console.error("Speech recognition error:", event.error);
-                    if (event.error !== 'no-speech' && event.error !== 'aborted') {
-                        setStatus('idle');
-                    }
                 };
                 
                 recognition.onresult = (event) => {
-                    const transcript = event.results[event.results.length - 1][0].transcript.trim();
-
+                    const transcript = event.results[0][0].transcript.trim();
                     if(transcript) {
-                        recognition.stop();
-                        
                         setConversation(prevConversation => {
                             const updatedConversation = [...prevConversation, { role: 'user', text: transcript }];
                             getAiReply(updatedConversation);
@@ -194,7 +174,7 @@
                         recognitionRef.current.onresult = null;
                     }
                 };
-            }, [isListeningActive, status]);
+            }, []); 
 
             useEffect(() => {
                 const warmUp = () => window.speechSynthesis.getVoices();
@@ -225,7 +205,7 @@
                         <div className="p-4 border-t">
                              { (status === 'thinking' || status === 'speaking' || status === 'listening') &&
                                 <p className="text-center text-sm text-gray-500 mb-2 italic">
-                                    {status === 'listening' ? 'Listening...' : status === 'thinking' ? 'Sahay is thinking...' : 'Sahay is speaking...'}
+                                    {status === 'listening' ? 'వింటున్నారు...' : status === 'thinking' ? 'సహాయ్ ఆలోచిస్తున్నారు...' : 'సహాయ్ మాట్లాడుతున్నారు...'}
                                 </p>
                              }
                             <form onSubmit={handleTextSubmit} className="flex items-center gap-2">
@@ -233,7 +213,7 @@
                                     type="text"
                                     value={inputText}
                                     onChange={(e) => setInputText(e.target.value)}
-                                    placeholder="Type your message..."
+                                    placeholder="మీ సందేశాన్ని టైప్ చేయండి..."
                                     className="flex-1 p-3 border rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500"
                                     disabled={status !== 'idle'}
                                 />
