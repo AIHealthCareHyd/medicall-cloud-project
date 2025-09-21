@@ -1,4 +1,5 @@
 // FILE: netlify/functions/textToSpeech.ts
+import { auth } from 'google-auth-library';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 
 const headers = {
@@ -11,9 +12,8 @@ const handler: Handler = async (event: HandlerEvent) => {
     if (event.httpMethod === 'OPTIONS') {
         return { statusCode: 200, headers };
     }
-    // Use the variable name you created in Netlify
-    if (!process.env.TEXT_TO_SPEACH) {
-        return { statusCode: 500, headers, body: JSON.stringify({ error: "Text-to-Speech API key is not configured." }) };
+    if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
+        return { statusCode: 500, headers, body: JSON.stringify({ error: "Google Service Account key is not configured." }) };
     }
 
     try {
@@ -22,8 +22,14 @@ const handler: Handler = async (event: HandlerEvent) => {
             return { statusCode: 400, headers, body: JSON.stringify({ error: "No text provided to synthesize." }) };
         }
 
-        const apiKey = process.env.TEXT_TO_SPEACH;
-        const url = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`;
+        // --- CHANGE IS HERE: Authenticate using the Service Account Key ---
+        const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY);
+        const client = auth.fromJSON(credentials);
+        client.scopes = ['https://www.googleapis.com/auth/cloud-platform'];
+        const accessToken = await client.getAccessToken();
+        // --- END OF CHANGE ---
+
+        const url = `https://texttospeech.googleapis.com/v1/text:synthesize`;
 
         const requestBody = {
             input: { text },
@@ -38,7 +44,11 @@ const handler: Handler = async (event: HandlerEvent) => {
 
         const ttsResponse = await fetch(url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+                'Content-Type': 'application/json',
+                // Use the OAuth2 token for authentication
+                'Authorization': `Bearer ${accessToken.token}`
+            },
             body: JSON.stringify(requestBody)
         });
 
