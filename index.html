@@ -19,14 +19,15 @@
 
         function App() {
             const [conversation, setConversation] = useState([
-                // The initial greeting is now in Telugu
                 { role: 'model', text: "నమస్కారం! నేను సహాయ్, మీ AI ఆరోగ్య సహాయకుడిని. నేను మీకు ఎలా సహాయపడగలను?" }
             ]);
             const [status, setStatus] = useState('idle');
             const [isListeningActive, setIsListeningActive] = useState(false);
             const [inputText, setInputText] = useState('');
+            
             const recognitionRef = useRef(null);
             const conversationEndRef = useRef(null);
+            const audioRef = useRef(null); // Ref to control the audio element
 
             const scrollToBottom = () => {
                 conversationEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -36,32 +37,37 @@
                 scrollToBottom();
             }, [conversation]);
 
-            const speak = (text) => {
-                window.speechSynthesis.cancel();
-                return new Promise((resolve, reject) => {
-                    setStatus('speaking');
-                    const utterance = new SpeechSynthesisUtterance(text);
-                    const voices = window.speechSynthesis.getVoices();
-                    if (voices.length > 0) {
-                        // Find a Telugu voice
-                        const teluguVoice = voices.find(voice => voice.lang === 'te-IN');
-                        if (teluguVoice) {
-                            utterance.voice = teluguVoice;
-                        } else {
-                            console.warn("Telugu voice (te-IN) not found. Using default voice.");
-                        }
+            // --- REWRITTEN SPEAK FUNCTION ---
+            // This now calls our secure backend function to get the audio.
+            const speak = async (text) => {
+                if (!text || status === 'speaking') return; // Prevent empty requests or overlaps
+                setStatus('speaking');
+                try {
+                    const ttsFunctionUrl = 'https://sahayhealth.netlify.app/.netlify/functions/textToSpeech';
+                    const response = await fetch(ttsFunctionUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ text }),
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`Text-to-speech service failed with status ${response.status}`);
                     }
-                    utterance.onend = () => {
-                        setStatus('idle');
-                        resolve();
-                    };
-                    utterance.onerror = (event) => {
-                        console.error("SpeechSynthesis Error", event);
-                        setStatus('idle');
-                        reject(event.error);
-                    };
-                    window.speechSynthesis.speak(utterance);
-                });
+
+                    const data = await response.json();
+                    if (data.audioContent) {
+                        const audioSrc = `data:audio/mp3;base64,${data.audioContent}`;
+                        if (audioRef.current) {
+                            audioRef.current.src = audioSrc;
+                            await audioRef.current.play();
+                        }
+                    } else {
+                        throw new Error("No audio content received from the server.");
+                    }
+                } catch (error) {
+                    console.error("Error playing synthesized speech:", error);
+                    setStatus('idle'); // Reset status on error
+                }
             };
             
             const getAiReply = async (currentConversation) => {
@@ -81,8 +87,8 @@
                     });
 
                     if (!response.ok) {
-                        const errorText = await response.text();
-                        throw new Error(`Network error: ${response.status} - ${errorText}`);
+                        const errorData = await response.json();
+                        throw new Error(`Network error: ${response.status} - ${errorData.error || response.statusText}`);
                     }
 
                     const data = await response.json();
@@ -129,37 +135,24 @@
                     console.warn("Speech recognition not supported.");
                     return;
                 }
+                recognitionRef.current = new SpeechRecognition();
+                recognitionRef.current.continuous = false;
+                recognitionRef.current.interimResults = false;
+                recognitionRef.current.lang = 'te-IN';
+            }, []);
 
-                if (!recognitionRef.current) {
-                    const recognition = new SpeechRecognition();
-                    recognition.continuous = false; // Use single-shot for better control
-                    recognition.interimResults = false;
-                    // Tell the browser to listen for Telugu
-                    recognition.lang = 'te-IN';
-                    recognitionRef.current = recognition;
-                }
-                
+            useEffect(() => {
                 const recognition = recognitionRef.current;
-
-                recognition.onstart = () => {
-                    setIsListeningActive(true);
-                    setStatus('listening');
-                };
-
-                recognition.onend = () => {
-                    setIsListeningActive(false);
-                    setStatus('idle');
-                };
-
-                recognition.onerror = (event) => {
-                    console.error("Speech recognition error:", event.error);
-                };
+                if (!recognition) return;
                 
+                recognition.onstart = () => { setIsListeningActive(true); setStatus('listening'); };
+                recognition.onend = () => { setIsListeningActive(false); setStatus('idle'); };
+                recognition.onerror = (event) => { console.error("Speech recognition error:", event.error); };
                 recognition.onresult = (event) => {
                     const transcript = event.results[0][0].transcript.trim();
                     if(transcript) {
-                        setConversation(prevConversation => {
-                            const updatedConversation = [...prevConversation, { role: 'user', text: transcript }];
+                        setConversation(prev => {
+                            const updatedConversation = [...prev, { role: 'user', text: transcript }];
                             getAiReply(updatedConversation);
                             return updatedConversation;
                         });
@@ -174,26 +167,29 @@
                         recognitionRef.current.onresult = null;
                     }
                 };
-            }, []); 
+            }, []);
 
             useEffect(() => {
-                const warmUp = () => window.speechSynthesis.getVoices();
-                if (window.speechSynthesis.onvoiceschanged !== undefined) {
-                    window.speechSynthesis.onvoiceschanged = warmUp;
+                if (audioRef.current) {
+                    const handleAudioEnd = () => setStatus('idle');
+                    audioRef.current.addEventListener('ended', handleAudioEnd);
+                    return () => {
+                        if (audioRef.current) {
+                            audioRef.current.removeEventListener('ended', handleAudioEnd);
+                        }
+                    };
                 }
-                warmUp();
-                return () => { window.speechSynthesis.onvoiceschanged = null; };
-            }, []);
+            }, [audioRef.current]);
 
             return (
                 <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 font-sans p-4">
+                    <audio ref={audioRef} style={{ display: 'none' }} />
                     <div className="w-full max-w-md h-[80vh] flex flex-col bg-white rounded-lg shadow-xl">
                         <div className="text-center p-4 border-b">
                             <h1 className="text-2xl font-bold text-blue-900">PRUDENCE HOSPITALS</h1>
                             <p className="text-sm text-gray-500">AI Health Assistant</p>
                         </div>
-                        
-                        <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3">
+                        <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3 border-t">
                             {conversation.map((turn, index) => (
                                 <div key={index} className={`p-3 rounded-lg max-w-[85%] w-fit ${turn.role === 'user' ? 'bg-blue-500 text-white self-end' : 'bg-gray-200 text-gray-800 self-start'}`}>
                                     <p>{turn.text}</p>
@@ -201,7 +197,6 @@
                             ))}
                             <div ref={conversationEndRef} />
                         </div>
-                        
                         <div className="p-4 border-t">
                              { (status === 'thinking' || status === 'speaking' || status === 'listening') &&
                                 <p className="text-center text-sm text-gray-500 mb-2 italic">
@@ -242,7 +237,6 @@
         const container = document.getElementById('root');
         const root = ReactDOM.createRoot(container);
         root.render(<App />);
-
     </script>
 
 </body>
