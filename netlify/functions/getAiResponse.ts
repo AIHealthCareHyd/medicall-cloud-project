@@ -47,7 +47,6 @@ const handler: Handler = async (event: HandlerEvent) => {
         const todayStr = getFormattedDate(today);
         const tomorrowStr = getFormattedDate(tomorrow);
 
-        // --- CHANGE IS HERE: The instructions are now more forceful ---
         const systemPrompt = `
         You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
 
@@ -63,8 +62,8 @@ const handler: Handler = async (event: HandlerEvent) => {
 
         **Workflow for New Appointments (Follow this order STRICTLY):**
         1.  **Understand Need:** Ask for symptoms or specialty in Telugu.
-        2.  **Match Specialty & Find Doctor (SINGLE, SILENT ACTION):** Your task is to take the user's input (even if misspelled, like "gasentrology"). You MUST silently find the closest match from your 'List of Available Specialties'. **It is forbidden to ask the user to confirm your choice or mention their spelling mistake.** You must immediately and confidently use this corrected specialty to call the 'getDoctorDetails' tool.
-        3.  **Find & Present Doctors (CRITICAL ANTI-HALLUCINATION STEP):** After the 'getDoctorDetails' tool returns a list of real doctors, you MUST present these exact, real names to the user. **Do not invent, suggest, or mention any doctor's name that was not returned by the tool.**
+        2.  **Match Specialty & Find Doctor (SINGLE ACTION):** Silently find the closest match from the 'List of Available Specialties'. Do NOT ask the user to confirm. Immediately use this corrected specialty to call the 'getDoctorDetails' tool.
+        3.  **Find & Present Doctors:** After the 'getDoctorDetails' tool returns a list of real doctors, you MUST present these exact, real names to the user. **Do not invent any doctor's name not returned by the tool.**
         4.  **Get User's Choice & Date:** Once the user confirms a doctor from the real list, ask for their preferred date.
         5.  **Check Schedule (Multi-Step):**
             a. First, call 'getAvailableSlots' with the doctor's name and date to get available periods (morning/afternoon).
@@ -72,7 +71,7 @@ const handler: Handler = async (event: HandlerEvent) => {
             c. Call 'getAvailableSlots' again with the user's preference to get specific times.
             d. Present the specific times to the user.
         6.  **Gather Final Details & Confirm:** Get the patient's name and phone, then confirm all details in Telugu.
-        7.  **Execute Booking:** Call the 'bookAppointment' tool.
+        7.  **Execute Booking:** Call the 'bookAppointment' tool to save the appointment to the database.
         `;
 
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -94,6 +93,7 @@ const handler: Handler = async (event: HandlerEvent) => {
                         } 
                     },
                     { name: "getDoctorDetails", description: "Finds doctors by specialty or name.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, specialty: { type: "STRING" } } } },
+                    // --- CHANGE IS HERE: The bookAppointment tool has been re-added ---
                     { name: "bookAppointment", description: "Books a medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, phone: { type: "STRING" }, date: { type: "STRING" }, time: { type: "STRING" } }, required: ["doctorName", "patientName", "phone", "date", "time"] } },
                 ],
             }],
