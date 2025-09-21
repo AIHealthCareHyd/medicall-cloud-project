@@ -11,7 +11,7 @@ const handler: Handler = async (event: HandlerEvent) => {
     if (event.httpMethod === 'OPTIONS') {
         return { statusCode: 200, headers };
     }
-    // --- CHANGE IS HERE: Updated to match your environment variable name ---
+    // Use the variable name you created in Netlify
     if (!process.env.TEXT_TO_SPEACH) {
         return { statusCode: 500, headers, body: JSON.stringify({ error: "Text-to-Speech API key is not configured." }) };
     }
@@ -23,14 +23,13 @@ const handler: Handler = async (event: HandlerEvent) => {
         }
 
         const apiKey = process.env.TEXT_TO_SPEACH;
-        // --- END OF CHANGE ---
         const url = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`;
 
         const requestBody = {
             input: { text },
             voice: {
                 languageCode: 'te-IN',
-                name: 'te-IN-Wavenet-A' // A standard, high-quality Telugu voice
+                name: 'te-IN-Wavenet-A'
             },
             audioConfig: {
                 audioEncoding: 'MP3'
@@ -51,7 +50,6 @@ const handler: Handler = async (event: HandlerEvent) => {
 
         const ttsData = await ttsResponse.json();
         
-        // The audio is returned as a base64 encoded string
         return {
             statusCode: 200,
             headers,
@@ -64,6 +62,5 @@ const handler: Handler = async (event: HandlerEvent) => {
     }
 };
 
-export { handler };    
-
+export { handler };
 
