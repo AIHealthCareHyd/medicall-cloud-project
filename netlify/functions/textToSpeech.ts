@@ -22,12 +22,10 @@ const handler: Handler = async (event: HandlerEvent) => {
             return { statusCode: 400, headers, body: JSON.stringify({ error: "No text provided to synthesize." }) };
         }
 
-        // --- CHANGE IS HERE: Authenticate using the Service Account Key ---
         const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY);
         const client = auth.fromJSON(credentials);
         client.scopes = ['https://www.googleapis.com/auth/cloud-platform'];
         const accessToken = await client.getAccessToken();
-        // --- END OF CHANGE ---
 
         const url = `https://texttospeech.googleapis.com/v1/text:synthesize`;
 
@@ -35,7 +33,8 @@ const handler: Handler = async (event: HandlerEvent) => {
             input: { text },
             voice: {
                 languageCode: 'te-IN',
-                name: 'te-IN-Wavenet-A'
+                // --- CHANGE IS HERE: Using a different, valid Telugu voice name ---
+                name: 'te-IN-Standard-A'
             },
             audioConfig: {
                 audioEncoding: 'MP3'
@@ -46,7 +45,6 @@ const handler: Handler = async (event: HandlerEvent) => {
             method: 'POST',
             headers: { 
                 'Content-Type': 'application/json',
-                // Use the OAuth2 token for authentication
                 'Authorization': `Bearer ${accessToken.token}`
             },
             body: JSON.stringify(requestBody)
