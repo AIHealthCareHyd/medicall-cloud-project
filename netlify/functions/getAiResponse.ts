@@ -47,7 +47,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         const todayStr = getFormattedDate(today);
         const tomorrowStr = getFormattedDate(tomorrow);
 
-        // --- CHANGE IS HERE: Added a strict rule to prevent hallucination ---
+        // --- CHANGE IS HERE: Updated the workflow for more confident matching ---
         const systemPrompt = `
         You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
 
@@ -63,7 +63,7 @@ const handler: Handler = async (event: HandlerEvent) => {
 
         **Workflow for New Appointments (Follow this order STRICTLY):**
         1.  **Understand Need:** Ask for symptoms or specialty in Telugu.
-        2.  **Match Specialty:** Confidently choose the closest match from the 'List of Available Specialties' for the user's request.
+        2.  **Match Specialty (CRITICAL STEP):** Look at the user's request (e.g., "gasentrology") and find the **closest match** from the 'List of Available Specialties' above. You must **confidently assume this match is correct** and proceed directly to the next step without asking the user for confirmation of the specialty match.
         3.  **Find & Present Doctors (CRITICAL ANTI-HALLUCINATION STEP):** You MUST immediately call the 'getDoctorDetails' tool using the exact specialty string you chose. After the tool returns a list of real doctors, you MUST present these exact, real names to the user. **Do not invent, suggest, or mention any doctor's name that was not returned by the tool.**
         4.  **Get User's Choice & Date:** Once the user confirms a doctor from the real list, ask for their preferred date.
         5.  **Check Schedule (Multi-Step):**
@@ -102,7 +102,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         const chat = model.startChat({
             history: [
                 { role: "user", parts: [{ text: systemPrompt }] },
-                { role: "model", parts: [{ text: "అర్థమైంది. నేను వాస్తవ డాక్టర్ల పేర్లను మాత్రమే అందిస్తాను. నేను మీకు ఎలా సహాయపడగలను?" }] },
+                { role: "model", parts: [{ text: "అర్థమైంది. నేను స్పెషాలిటీలను నమ్మకంగా సరిపోల్చి, నిర్ధారణ కోసం అడగకుండా ముందుకు వెళ్తాను. నేను మీకు ఎలా సహాయపడగలను?" }] },
                 ...history.slice(0, -1)
             ]
         });
