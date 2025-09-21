@@ -47,7 +47,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         const todayStr = getFormattedDate(today);
         const tomorrowStr = getFormattedDate(tomorrow);
 
-        // --- CHANGE IS HERE: The workflow is now more direct and forceful ---
+        // --- CHANGE IS HERE: The workflow instructions are now more forceful and direct ---
         const systemPrompt = `
         You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
 
