@@ -47,6 +47,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         const todayStr = getFormattedDate(today);
         const tomorrowStr = getFormattedDate(tomorrow);
 
+        // --- CHANGE IS HERE: Added a strict rule to prevent hallucination ---
         const systemPrompt = `
         You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
 
@@ -57,21 +58,22 @@ const handler: Handler = async (event: HandlerEvent) => {
 
         **Internal Rules & Date Handling (CRITICAL):**
         - Today's date is ${todayStr}. Tomorrow's date is ${tomorrowStr}.
-        - You MUST silently convert natural language dates (e.g., "రేపు") and times (e.g., "1 గంటకు") into 'YYYY-MM-DD' and 'HH:MM' formats before calling tools.
+        - You MUST silently convert natural language dates and times into 'YYYY-MM-DD' and 'HH:MM' formats before calling tools.
         - NEVER mention date or time formats to the user.
 
         **Workflow for New Appointments (Follow this order STRICTLY):**
         1.  **Understand Need:** Ask for symptoms or specialty in Telugu.
-        2.  **Match Specialty & Find Doctor (SINGLE ACTION):** Silently find the closest match from the 'List of Available Specialties'. Do NOT ask the user to confirm. Immediately use this corrected specialty to call the 'getDoctorDetails' tool.
-        3.  **Find & Present Doctors:** After the 'getDoctorDetails' tool returns a list of real doctors, you MUST present these exact, real names to the user. **Do not invent any doctor's name not returned by the tool.**
+        2.  **Match Specialty & Find Doctor (SINGLE, SILENT ACTION):** Take the user's input (even if misspelled). You MUST silently find the closest match from the 'List of Available Specialties'. **It is forbidden to ask the user to confirm your choice or mention their spelling mistake.** Immediately and confidently use this corrected specialty to call the 'getDoctorDetails' tool.
+        3.  **Find & Present Doctors:** After the 'getDoctorDetails' tool returns real doctors, you MUST present these exact, real names to the user. **Do not invent any doctor's name not returned by the tool.**
         4.  **Get User's Choice & Date:** Once the user confirms a doctor from the real list, ask for their preferred date.
         5.  **Check Schedule (Multi-Step):**
-            a. First, call 'getAvailableSlots' with the doctor's name and date to get available periods (morning/afternoon).
+            a. First, call 'getAvailableSlots' to get available periods (morning/afternoon).
             b. Ask the user for their preference.
-            c. Call 'getAvailableSlots' again with the user's preference to get specific times.
+            c. Call 'getAvailableSlots' again with their preference to get specific times.
             d. Present the specific times to the user.
-        6.  **Gather Final Details & Confirm:** Get the patient's name and phone, then confirm all details in Telugu.
-        7.  **Execute Booking:** Call the 'bookAppointment' tool to save the appointment to the database.
+        6.  **Gather Final Details:** Get the patient's name and phone number.
+        7.  **Final Confirmation:** After gathering all details, present a complete summary to the user and ask for a final confirmation (e.g., "అంతా సరిగ్గా ఉందా?").
+        8.  **Execute Booking (CRITICAL FINAL STEP):** After the user gives their final "yes" or "ok", your final action MUST be to call the 'bookAppointment' tool to save the appointment to the database.
         `;
 
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -93,7 +95,6 @@ const handler: Handler = async (event: HandlerEvent) => {
                         } 
                     },
                     { name: "getDoctorDetails", description: "Finds doctors by specialty or name.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, specialty: { type: "STRING" } } } },
-                    // --- CHANGE IS HERE: The bookAppointment tool has been re-added ---
                     { name: "bookAppointment", description: "Books a medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, phone: { type: "STRING" }, date: { type: "STRING" }, time: { type: "STRING" } }, required: ["doctorName", "patientName", "phone", "date", "time"] } },
                 ],
             }],
