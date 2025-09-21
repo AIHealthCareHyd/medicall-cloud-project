@@ -1,5 +1,6 @@
 // FILE: netlify/functions/getAiResponse.ts
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { createClient } from '@supabase/supabase-js';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 
 const headers = {
@@ -9,7 +10,7 @@ const headers = {
 };
 
 const getFormattedDate = (date: Date): string => {
-    return date.toISOString().split('T')[0]; // Returns YYYY-MM-DD
+    return date.toISOString().split('T')[0];
 }
 
 const handler: Handler = async (event: HandlerEvent) => {
@@ -17,9 +18,10 @@ const handler: Handler = async (event: HandlerEvent) => {
         return { statusCode: 200, headers, body: JSON.stringify({ message: 'CORS preflight successful' }) };
     }
 
-    if (!process.env.GEMINI_API_KEY) {
-        return { statusCode: 500, headers, body: JSON.stringify({ error: "AI configuration error." }) };
+    if (!process.env.GEMINI_API_KEY || !process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+        return { statusCode: 500, headers, body: JSON.stringify({ error: "Configuration error." }) };
     }
+    
     let body;
     try {
         body = JSON.parse(event.body || '{}');
@@ -32,42 +34,64 @@ const handler: Handler = async (event: HandlerEvent) => {
         return { statusCode: 400, headers, body: JSON.stringify({ error: "No history provided." }) };
     }
     
-    const today = new Date();
-    const tomorrow = new Date();
-    tomorrow.setDate(today.getDate() + 1);
-
-    const todayStr = getFormattedDate(today);
-    const tomorrowStr = getFormattedDate(tomorrow);
-
-    // --- CHANGE IS HERE: The entire prompt is updated to enforce Telugu ---
-    const systemPrompt = `
-    You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
-
-    **Primary Instruction: You MUST conduct the entire conversation in Telugu.** All of your responses must be in the Telugu language.
-
-    **Internal Rules & Date Handling (CRITICAL):**
-    - Today's date is ${todayStr}.
-    - Tomorrow's date is ${tomorrowStr}.
-    - When the user gives you a date in natural language (e.g., "రేపు", "సెప్టెంబర్ 19"), you MUST silently and internally convert it to the strict 'YYYY-MM-DD' format before calling any tools.
-    - NEVER mention the 'YYYY-MM-DD' format to the user. Keep the conversation natural.
-
-    **Workflow for New Appointments (in Telugu):**
-    1.  **Understand Need:** Ask for symptoms or specialty.
-    2.  **Find & Confirm Doctor:** Use 'getDoctorDetails' to find doctors. You MUST get the user to confirm a specific doctor.
-    3.  **Get Date:** Once the doctor is confirmed, ask for their preferred date.
-    4.  **Check Schedule:** Internally convert the date and use 'getAvailableSlots'.
-    5.  **Present Times & Gather Details:** Present the available slots, then get the patient's name and phone.
-    6.  **Final Confirmation & Booking:** Confirm all details, then call the 'bookAppointment' tool.
-    `;
-
     try {
+        const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+        const { data: specialtiesData, error: specialtiesError } = await supabase.from('doctors').select('specialty');
+        if (specialtiesError) throw specialtiesError;
+        const specialtyList = [...new Set(specialtiesData.map(doc => doc.specialty))];
+        const specialtyListString = specialtyList.join(', ');
+
+        const today = new Date();
+        const tomorrow = new Date();
+        tomorrow.setDate(today.getDate() + 1);
+        const todayStr = getFormattedDate(today);
+        const tomorrowStr = getFormattedDate(tomorrow);
+
+        const systemPrompt = `
+        You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
+
+        **Primary Instruction: You MUST conduct the entire conversation in Telugu.**
+
+        **List of Available Specialties:**
+        Here are the only specialties available at the hospital: [${specialtyListString}]
+
+        **Internal Rules & Date Handling (CRITICAL):**
+        - Today's date is ${todayStr}. Tomorrow's date is ${tomorrowStr}.
+        - You MUST silently convert natural language dates (e.g., "రేపు") and times (e.g., "1 గంటకు") into 'YYYY-MM-DD' and 'HH:MM' formats before calling tools.
+        - NEVER mention date or time formats to the user. Keep the conversation natural.
+
+        **Workflow for New Appointments (Follow this order STRICTLY):**
+        1.  **Understand Need:** Ask for symptoms or specialty in Telugu.
+        2.  **Match Specialty:** Confidently choose the closest match from the 'List of Available Specialties' for the user's request. Proceed without asking for confirmation.
+        3.  **Find & Confirm Doctor:** Use 'getDoctorDetails' with the exact specialty string you chose. Present doctor options in Telugu and get the user to confirm one.
+        4.  **Get Date:** Once the doctor is confirmed, ask for their preferred date in Telugu.
+        5.  **Check Schedule (CRITICAL MULTI-STEP PROCESS):**
+            a. **First Call:** Call 'getAvailableSlots' with the doctor's name and the formatted date. It will return periods like ["morning", "afternoon"].
+            b. **Ask User:** Based on the results, ask for their preference in Telugu (e.g., "డాక్టర్‌కు ఉదయం మరియు మధ్యాహ్నం ఖాళీలు ఉన్నాయి. మీకు ఏది కావాలి?").
+            c. **Second Call:** Once the user responds (e.g., "మధ్యాహ్నం"), call 'getAvailableSlots' again, this time including their choice (e.g., timeOfDay: 'afternoon').
+            d. **Present Specific Times:** Present the short list of specific times to the user in Telugu.
+        6.  **Gather Final Details & Confirm:** Get the patient's name and phone, then confirm all details in Telugu.
+        7.  **Execute Booking:** Call the 'bookAppointment' tool.
+        `;
+
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
         const model = genAI.getGenerativeModel({ 
             model: "gemini-1.5-flash",
             tools: [{
                 functionDeclarations: [
-                    { name: "getAvailableSlots", description: "Gets available time slots for a doctor on a given date.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, date: { type: "STRING" } }, required: ["doctorName", "date"] } },
-                    { name: "getAllSpecialties", description: "Gets a list of all unique medical specialties available at the hospital.", parameters: { type: "OBJECT", properties: {} } },
+                    { 
+                        name: "getAvailableSlots", 
+                        description: "Gets available time slots for a doctor. If 'timeOfDay' is not provided, it returns available periods (morning, afternoon). If 'timeOfDay' IS provided, it returns specific times for that period.", 
+                        parameters: { 
+                            type: "OBJECT", 
+                            properties: { 
+                                doctorName: { type: "STRING" }, 
+                                date: { type: "STRING" },
+                                timeOfDay: { type: "STRING", description: "Optional. Can be 'morning', 'afternoon', or 'evening'." } 
+                            }, 
+                            required: ["doctorName", "date"] 
+                        } 
+                    },
                     { name: "getDoctorDetails", description: "Finds doctors by specialty or name.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, specialty: { type: "STRING" } } } },
                     { name: "bookAppointment", description: "Books a medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, phone: { type: "STRING" }, date: { type: "STRING" }, time: { type: "STRING" } }, required: ["doctorName", "patientName", "phone", "date", "time"] } },
                 ],
@@ -77,7 +101,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         const chat = model.startChat({
             history: [
                 { role: "user", parts: [{ text: systemPrompt }] },
-                { role: "model", parts: [{ text: "అర్థమైంది. నేను సంభాషణను తెలుగులో నిర్వహిస్తాను. నేను మీకు ఎలా సహాయపడగలను?" }] },
+                { role: "model", parts: [{ text: "అర్థమైంది. నేను స్లాట్‌లను తనిఖీ చేయడానికి బహుళ-దశల ప్రక్రియను అనుసరిస్తాను. నేను మీకు ఎలా సహాయపడగలను?" }] },
                 ...history.slice(0, -1)
             ]
         });

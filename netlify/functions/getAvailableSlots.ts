@@ -90,7 +90,6 @@ const handler: Handler = async (event: HandlerEvent) => {
         return { statusCode: 400, headers, body: JSON.stringify({ success: false, message: "Invalid time of day specified." }) };
 
     } catch (error: any) {
-        console.error("Error in getAvailableSlots:", error);
         return { statusCode: 500, headers, body: JSON.stringify({ success: false, message: error.message }) };
     }
 };
