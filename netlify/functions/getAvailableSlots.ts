@@ -12,6 +12,7 @@ const handler: Handler = async (event: HandlerEvent) => {
     if (event.httpMethod === 'OPTIONS') {
         return { statusCode: 200, headers };
     }
+    
     if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
         return { statusCode: 500, headers, body: JSON.stringify({ error: "Database configuration error." }) };
     }

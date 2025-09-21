@@ -47,7 +47,6 @@ const handler: Handler = async (event: HandlerEvent) => {
         const todayStr = getFormattedDate(today);
         const tomorrowStr = getFormattedDate(tomorrow);
 
-        // --- CHANGE IS HERE: The workflow instructions are now more forceful and direct ---
         const systemPrompt = `
         You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
 
@@ -58,7 +57,7 @@ const handler: Handler = async (event: HandlerEvent) => {
 
         **Internal Rules & Date Handling (CRITICAL):**
         - Today's date is ${todayStr}. Tomorrow's date is ${tomorrowStr}.
-        - You MUST silently convert natural language dates and times into 'YYYY-MM-DD' and 'HH:MM' formats before calling tools.
+        - You MUST silently convert natural language dates (e.g., "రేపు") and times (e.g., "1 గంటకు") into 'YYYY-MM-DD' and 'HH:MM' formats before calling tools.
         - NEVER mention date or time formats to the user.
 
         **Workflow for New Appointments (Follow this order STRICTLY):**
@@ -69,7 +68,7 @@ const handler: Handler = async (event: HandlerEvent) => {
             c. **Present ONLY Real Data:** The tool will return a list of real doctors. You are FORBIDDEN from inventing, hallucinating, or suggesting any doctor's name that was not in the tool's output. You MUST present only the exact, real names from the list to the user.
         3.  **Get User's Choice & Date:** Once the user confirms a doctor from the real list, ask for their preferred date.
         4.  **Check Schedule (Multi-Step):**
-            a. First, call 'getAvailableSlots' to get available periods (morning/afternoon).
+            a. First, call 'getAvailableSlots' with the doctor's name and date to get available periods (morning/afternoon).
             b. Ask the user for their preference.
             c. Call 'getAvailableSlots' again with their preference to get specific times.
             d. Present the specific times to the user.
@@ -97,6 +96,8 @@ const handler: Handler = async (event: HandlerEvent) => {
                     },
                     { name: "getDoctorDetails", description: "Finds doctors by specialty or name.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, specialty: { type: "STRING" } } } },
                     { name: "bookAppointment", description: "Books a medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, phone: { type: "STRING" }, date: { type: "STRING" }, time: { type: "STRING" } }, required: ["doctorName", "patientName", "phone", "date", "time"] } },
+                    { name: "cancelAppointment", description: "Cancels an existing medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, date: { type: "STRING" } }, required: ["doctorName", "patientName", "date"] } },
+                    { name: "rescheduleAppointment", description: "Reschedules an existing medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, oldDate: { type: "STRING" }, newDate: { type: "STRING" }, newTime: { type: "STRING" } }, required: ["doctorName", "patientName", "oldDate", "newDate", "newTime"] } },
                 ],
             }],
         }); 
@@ -127,7 +128,7 @@ const handler: Handler = async (event: HandlerEvent) => {
                 body: JSON.stringify(call.args),
             });
              if (!toolResponse.ok) {
-                toolResult = { error: `Tool call failed with status ${toolResponse.status}` };
+                toolResult = { error: `Tool call to ${call.name} failed with status ${toolResponse.status}` };
             } else {
                  toolResult = await toolResponse.json();
             }
