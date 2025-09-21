@@ -47,6 +47,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         const todayStr = getFormattedDate(today);
         const tomorrowStr = getFormattedDate(tomorrow);
 
+        // --- CHANGE IS HERE: Added a strict rule to prevent hallucination ---
         const systemPrompt = `
         You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
 
@@ -58,18 +59,18 @@ const handler: Handler = async (event: HandlerEvent) => {
         **Internal Rules & Date Handling (CRITICAL):**
         - Today's date is ${todayStr}. Tomorrow's date is ${tomorrowStr}.
         - You MUST silently convert natural language dates (e.g., "రేపు") and times (e.g., "1 గంటకు") into 'YYYY-MM-DD' and 'HH:MM' formats before calling tools.
-        - NEVER mention date or time formats to the user. Keep the conversation natural.
+        - NEVER mention date or time formats to the user.
 
         **Workflow for New Appointments (Follow this order STRICTLY):**
         1.  **Understand Need:** Ask for symptoms or specialty in Telugu.
-        2.  **Match Specialty:** Confidently choose the closest match from the 'List of Available Specialties' for the user's request. Proceed without asking for confirmation.
-        3.  **Find & Confirm Doctor:** Use 'getDoctorDetails' with the exact specialty string you chose. Present doctor options in Telugu and get the user to confirm one.
-        4.  **Get Date:** Once the doctor is confirmed, ask for their preferred date in Telugu.
-        5.  **Check Schedule (CRITICAL MULTI-STEP PROCESS):**
-            a. **First Call:** Call 'getAvailableSlots' with the doctor's name and the formatted date. It will return periods like ["morning", "afternoon"].
-            b. **Ask User:** Based on the results, ask for their preference in Telugu (e.g., "డాక్టర్‌కు ఉదయం మరియు మధ్యాహ్నం ఖాళీలు ఉన్నాయి. మీకు ఏది కావాలి?").
-            c. **Second Call:** Once the user responds (e.g., "మధ్యాహ్నం"), call 'getAvailableSlots' again, this time including their choice (e.g., timeOfDay: 'afternoon').
-            d. **Present Specific Times:** Present the short list of specific times to the user in Telugu.
+        2.  **Match Specialty:** Confidently choose the closest match from the 'List of Available Specialties' for the user's request.
+        3.  **Find & Present Doctors (CRITICAL ANTI-HALLUCINATION STEP):** You MUST immediately call the 'getDoctorDetails' tool using the exact specialty string you chose. After the tool returns a list of real doctors, you MUST present these exact, real names to the user. **Do not invent, suggest, or mention any doctor's name that was not returned by the tool.**
+        4.  **Get User's Choice & Date:** Once the user confirms a doctor from the real list, ask for their preferred date.
+        5.  **Check Schedule (Multi-Step):**
+            a. First, call 'getAvailableSlots' with the doctor's name and date to get available periods (morning/afternoon).
+            b. Ask the user for their preference.
+            c. Call 'getAvailableSlots' again with the user's preference to get specific times.
+            d. Present the specific times to the user.
         6.  **Gather Final Details & Confirm:** Get the patient's name and phone, then confirm all details in Telugu.
         7.  **Execute Booking:** Call the 'bookAppointment' tool.
         `;
@@ -81,7 +82,7 @@ const handler: Handler = async (event: HandlerEvent) => {
                 functionDeclarations: [
                     { 
                         name: "getAvailableSlots", 
-                        description: "Gets available time slots for a doctor. If 'timeOfDay' is not provided, it returns available periods (morning, afternoon). If 'timeOfDay' IS provided, it returns specific times for that period.", 
+                        description: "Gets available time slots for a doctor. If 'timeOfDay' is not provided, it returns available periods. If 'timeOfDay' IS provided, it returns specific times.", 
                         parameters: { 
                             type: "OBJECT", 
                             properties: { 
@@ -93,7 +94,6 @@ const handler: Handler = async (event: HandlerEvent) => {
                         } 
                     },
                     { name: "getDoctorDetails", description: "Finds doctors by specialty or name.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, specialty: { type: "STRING" } } } },
-                    // --- CHANGE IS HERE: The bookAppointment tool has been re-added ---
                     { name: "bookAppointment", description: "Books a medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, phone: { type: "STRING" }, date: { type: "STRING" }, time: { type: "STRING" } }, required: ["doctorName", "patientName", "phone", "date", "time"] } },
                 ],
             }],
@@ -102,7 +102,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         const chat = model.startChat({
             history: [
                 { role: "user", parts: [{ text: systemPrompt }] },
-                { role: "model", parts: [{ text: "అర్థమైంది. నేను స్లాట్‌లను తనిఖీ చేయడానికి బహుళ-దశల ప్రక్రియను అనుసరిస్తాను. నేను మీకు ఎలా సహాయపడగలను?" }] },
+                { role: "model", parts: [{ text: "అర్థమైంది. నేను వాస్తవ డాక్టర్ల పేర్లను మాత్రమే అందిస్తాను. నేను మీకు ఎలా సహాయపడగలను?" }] },
                 ...history.slice(0, -1)
             ]
         });
