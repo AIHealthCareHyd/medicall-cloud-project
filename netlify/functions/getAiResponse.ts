@@ -83,8 +83,13 @@ export const handler: Handler = async (event: HandlerEvent) => {
         1.  **Understand Need:** Ask for symptoms or specialty in pure Telugu.
         2.  **Find & Present Real Doctors:** Use the 'getDoctorDetails' tool and present ONLY the real names returned.
         3.  **Get User's Choice & Date:** After user picks a doctor, ask for their preferred date naturally.
-        4.  **Check Schedule:** Use 'getAvailableSlots' to find open slots.
-        5.  **Gather Final Details & Confirm:** Get the patient's name and phone number.
+        4.  **Check Schedule (MANDATORY Multi-Step Process):**
+            a. First, call 'getAvailableSlots' with only the date to get available periods (morning, afternoon, evening).
+            b. Present these periods to the user and get their choice.
+            c. **CRITICAL:** You MUST then call 'getAvailableSlots' a second time, this time providing the chosen 'timeOfDay'.
+            d. Present the specific time slots (e.g., 10:30, 11:00) returned from the second tool call to the user.
+            e. Get the user's choice of a specific time.
+        5.  **Gather Final Details:** ONLY after you have a specific time, ask for the patient's name and phone number.
         6.  **Execute Booking:** After the user's final "yes" or "ok", call the 'bookAppointment' tool with all data correctly formatted in English.
         `;
         
@@ -94,7 +99,7 @@ export const handler: Handler = async (event: HandlerEvent) => {
             systemInstruction: systemInstruction,
             tools: [{
                 functionDeclarations: [
-                    { name: "getAvailableSlots", description: "Gets available time slots for a doctor.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, date: { type: "STRING" }, timeOfDay: { type: "STRING", description: "Optional." } }, required: ["doctorName", "date"] } },
+                    { name: "getAvailableSlots", description: "Gets available time slots for a doctor. If 'timeOfDay' is not provided, it returns available periods. If 'timeOfDay' IS provided, it returns specific times.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, date: { type: "STRING" }, timeOfDay: { type: "STRING", description: "Optional. Can be 'morning', 'afternoon', or 'evening'." } }, required: ["doctorName", "date"] } },
                     { name: "getDoctorDetails", description: "Finds doctors by specialty or name.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, specialty: { type: "STRING" } } } },
                     { name: "bookAppointment", description: "Books a medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, phone: { type: "STRING" }, date: { type: "STRING" }, time: { type: "STRING" } }, required: ["doctorName", "patientName", "phone", "date", "time"] } },
                 ]
@@ -138,3 +143,4 @@ export const handler: Handler = async (event: HandlerEvent) => {
         return { statusCode: 500, headers, body: JSON.stringify({ error: `Failed to process request.` }) };
     }
 };
+
