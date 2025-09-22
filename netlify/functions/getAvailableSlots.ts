@@ -1,4 +1,8 @@
 // FILE: netlify/functions/getAvailableSlots.ts
+// This is the complete and corrected version.
+// It fixes the "HandlerNotFound" error by correctly exporting the handler
+// and uses an exact match for the doctor's name for improved reliability.
+
 import { createClient } from '@supabase/supabase-js';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 
@@ -8,7 +12,8 @@ const headers = {
   'Content-Type': 'application/json'
 };
 
-const handler: Handler = async (event: HandlerEvent) => {
+// The 'export' keyword is the critical fix for the "HandlerNotFound" error.
+export const handler: Handler = async (event: HandlerEvent) => {
     if (event.httpMethod === 'OPTIONS') {
         return { statusCode: 200, headers };
     }
@@ -23,18 +28,14 @@ const handler: Handler = async (event: HandlerEvent) => {
 
         const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
-        // --- CHANGE IS HERE: Switched from .ilike() to .eq() for an exact match ---
-        // This prevents ambiguity and errors if two doctors have similar names.
-        // The AI is expected to provide the full, exact name from the previous step.
+        // This query now uses .eq() for a reliable, exact match on the doctor's name.
         const { data: doctorData, error: doctorError } = await supabase
             .from('doctors')
             .select('id, working_hours_start, working_hours_end')
-            .eq('name', doctorName) // Use exact match '.eq()' for reliability
+            .eq('name', doctorName)
             .single();
-        // --- END OF CHANGE ---
 
         if (doctorError || !doctorData) {
-            // Updated error message for clarity
             return { statusCode: 404, headers, body: JSON.stringify({ success: false, message: `Could not find a doctor with the exact name ${doctorName}.` }) };
         }
         
@@ -99,3 +100,4 @@ const handler: Handler = async (event: HandlerEvent) => {
         return { statusCode: 500, headers, body: JSON.stringify({ success: false, message: error.message }) };
     }
 };
+
