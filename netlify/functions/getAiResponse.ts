@@ -1,4 +1,5 @@
-// FILE: netlify/functions/bookAppointment.ts
+// FILE: netlify/functions/getAiResponse.ts
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { createClient } from '@supabase/supabase-js';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 
@@ -8,202 +9,143 @@ const headers = {
   'Content-Type': 'application/json'
 };
 
+const getFormattedDate = (date: Date): string => {
+    return date.toISOString().split('T')[0];
+}
+
 const handler: Handler = async (event: HandlerEvent) => {
     if (event.httpMethod === 'OPTIONS') {
         return { statusCode: 200, headers, body: JSON.stringify({ message: 'CORS preflight successful' }) };
     }
-    
-    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
-        console.error("Missing Supabase configuration");
-        return { 
-            statusCode: 500, 
-            headers, 
-            body: JSON.stringify({ 
-                success: false,
-                error: "Database configuration error." 
-            }) 
-        };
+
+    if (!process.env.GEMINI_API_KEY || !process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+        return { statusCode: 500, headers, body: JSON.stringify({ error: "Configuration error." }) };
     }
-
+    
+    let body;
     try {
-        const requestBody = JSON.parse(event.body || '{}');
-        const { doctorName, patientName, date, time, phone } = requestBody;
-        
-        console.log("Booking appointment request:", { doctorName, patientName, date, time, phone });
-
-        // Validate required fields
-        const missingFields = [];
-        if (!doctorName) missingFields.push('doctorName');
-        if (!patientName) missingFields.push('patientName');
-        if (!date) missingFields.push('date');
-        if (!time) missingFields.push('time');
-        if (!phone) missingFields.push('phone');
-
-        if (missingFields.length > 0) {
-            return { 
-                statusCode: 400, 
-                headers, 
-                body: JSON.stringify({ 
-                    success: false,
-                    error: `Missing required fields: ${missingFields.join(', ')}`,
-                    received: requestBody
-                }) 
-            };
-        }
-
-        // Validate date format (YYYY-MM-DD)
-        const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-        if (!dateRegex.test(date)) {
-            return { 
-                statusCode: 400, 
-                headers, 
-                body: JSON.stringify({ 
-                    success: false,
-                    error: `Invalid date format. Expected YYYY-MM-DD, received: ${date}` 
-                }) 
-            };
-        }
-
-        // Validate time format (HH:MM)
-        const timeRegex = /^\d{2}:\d{2}$/;
-        if (!timeRegex.test(time)) {
-            return { 
-                statusCode: 400, 
-                headers, 
-                body: JSON.stringify({ 
-                    success: false,
-                    error: `Invalid time format. Expected HH:MM, received: ${time}` 
-                }) 
-            };
-        }
-
+        body = JSON.parse(event.body || '{}');
+    } catch (e) {
+        return { statusCode: 400, headers, body: JSON.stringify({ error: "Invalid request body." }) };
+    }
+    
+    const { history } = body;
+    if (!history || !Array.isArray(history) || history.length === 0) {
+        return { statusCode: 400, headers, body: JSON.stringify({ error: "No history provided." }) };
+    }
+    
+    try {
         const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+        const { data: specialtiesData, error: specialtiesError } = await supabase.from('doctors').select('specialty');
+        if (specialtiesError) throw specialtiesError;
+        const specialtyList = [...new Set(specialtiesData.map(doc => doc.specialty))];
+        const specialtyListString = specialtyList.join(', ');
 
-        // Step 1: Find the doctor with exact name match
-        console.log(`Looking for doctor: "${doctorName}"`);
-        const { data: doctorData, error: doctorError } = await supabase
-            .from('doctors')
-            .select('id, name')
-            .eq('name', doctorName.trim())
-            .single();
+        const today = new Date();
+        const tomorrow = new Date();
+        tomorrow.setDate(today.getDate() + 1);
+        const todayStr = getFormattedDate(today);
+        const tomorrowStr = getFormattedDate(tomorrow);
 
-        if (doctorError || !doctorData) {
-            console.error("Doctor not found:", doctorError);
+        const systemPrompt = `
+        You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
+
+        **Primary Instruction: You MUST conduct the entire conversation in Telugu.**
+
+        **List of Available Specialties:**
+        Here are the only specialties available at the hospital: [${specialtyListString}]
+
+        **Internal Rules & Date Handling (CRITICAL):**
+        - Today's date is ${todayStr}. Tomorrow's date is ${tomorrowStr}.
+        - You MUST silently convert natural language dates (e.g., "రేపు") and times (e.g., "1 గంటకు") into 'YYYY-MM-DD' and 'HH:MM' formats before calling tools.
+        - NEVER mention date or time formats to the user.
+
+        **Workflow for New Appointments (Follow this order STRICTLY):**
+        1.  **Understand Need:** Ask for symptoms or specialty in Telugu.
+        2.  **Find & Present Real Doctors (CRITICAL ANTI-HALLUCINATION WORKFLOW):**
+            a. **Silently Match Specialty:** Take the user's input (e.g., "gasentrology"). Silently and confidently find the closest match from your 'List of Available Specialties' (e.g., "Surgical Gastroenterology"). It is forbidden to ask for confirmation or mention the user's spelling.
+            b. **Immediately Call Tool:** You MUST immediately use this corrected specialty to call the 'getDoctorDetails' tool.
+            c. **Present ONLY Real Data:** The tool will return a list of real doctors. You are FORBIDDEN from inventing, hallucinating, or suggesting any doctor's name that was not in the tool's output. You MUST present only the exact, real names from the list to the user.
+        3.  **Get User's Choice & Date:** Once the user confirms a doctor from the real list, ask for their preferred date.
+        4.  **Check Schedule (Multi-Step):**
+            a. First, call 'getAvailableSlots' to get available periods (morning/afternoon).
+            b. Ask the user for their preference.
+            c. Call 'getAvailableSlots' again with their preference to get specific times.
+            d. Present the specific times to the user.
+        5.  **Gather Final Details & Confirm:** Get the patient's name and phone, then confirm all details in Telugu.
+        6.  **Execute Booking:** After the user gives their final "yes" or "ok", your final action MUST be to call the 'bookAppointment' tool to save the appointment to the database.
+        `;
+
+        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+        const model = genAI.getGenerativeModel({ 
+            model: "gemini-1.5-flash",
+            tools: [{
+                functionDeclarations: [
+                    { 
+                        name: "getAvailableSlots", 
+                        description: "Gets available time slots for a doctor. If 'timeOfDay' is not provided, it returns available periods. If 'timeOfDay' IS provided, it returns specific times.", 
+                        parameters: { 
+                            type: "OBJECT", 
+                            properties: { 
+                                doctorName: { type: "STRING" }, 
+                                date: { type: "STRING" },
+                                timeOfDay: { type: "STRING", description: "Optional. Can be 'morning', 'afternoon', or 'evening'." } 
+                            }, 
+                            required: ["doctorName", "date"] 
+                        } 
+                    },
+                    { name: "getDoctorDetails", description: "Finds doctors by specialty or name.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, specialty: { type: "STRING" } } } },
+                    { name: "bookAppointment", description: "Books a medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, phone: { type: "STRING" }, date: { type: "STRING" }, time: { type: "STRING" } }, required: ["doctorName", "patientName", "phone", "date", "time"] } },
+                    { name: "cancelAppointment", description: "Cancels an existing medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, date: { type: "STRING" } }, required: ["doctorName", "patientName", "date"] } },
+                    { name: "rescheduleAppointment", description: "Reschedules an existing medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, oldDate: { type: "STRING" }, newDate: { type: "STRING" }, newTime: { type: "STRING" } }, required: ["doctorName", "patientName", "oldDate", "newDate", "newTime"] } },
+                ],
+            }],
+        }); 
+        
+        const chat = model.startChat({
+            history: [
+                { role: "user", parts: [{ text: systemPrompt }] },
+                { role: "model", parts: [{ text: "అర్థమైంది. నేను వాస్తవ డాక్టర్ల పేర్లను మాత్రమే అందిస్తాను. నేను మీకు ఎలా సహాయపడగలను?" }] },
+                ...history.slice(0, -1)
+            ]
+        });
+
+        const latestUserMessage = history[history.length - 1].parts[0].text;
+
+        const result = await chat.sendMessage(latestUserMessage);
+        const response = result.response;
+        const functionCalls = response.functionCalls();
+
+        if (functionCalls && functionCalls.length > 0) {
+            const call = functionCalls[0];
+            let toolResult;
+            const host = event.headers.host || 'sahayhealth.netlify.app';
+            const toolUrl = `https://${host}/.netlify/functions/${call.name}`;
             
-            // Try fuzzy search as fallback
-            const { data: fuzzyDoctors, error: fuzzyError } = await supabase
-                .from('doctors')
-                .select('id, name')
-                .ilike('name', `%${doctorName.trim()}%`)
-                .limit(5);
-
-            if (fuzzyError || !fuzzyDoctors || fuzzyDoctors.length === 0) {
-                return { 
-                    statusCode: 404, 
-                    headers, 
-                    body: JSON.stringify({ 
-                        success: false, 
-                        error: `Doctor "${doctorName}" not found in the system.` 
-                    }) 
-                };
+            const toolResponse = await fetch(toolUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(call.args),
+            });
+             if (!toolResponse.ok) {
+                toolResult = { error: `Tool call to ${call.name} failed with status ${toolResponse.status}` };
+            } else {
+                 toolResult = await toolResponse.json();
             }
 
-            // If we found similar doctors, suggest them
-            const suggestions = fuzzyDoctors.map(doc => doc.name).join(', ');
-            return { 
-                statusCode: 404, 
-                headers, 
-                body: JSON.stringify({ 
-                    success: false, 
-                    error: `Doctor "${doctorName}" not found. Did you mean one of these: ${suggestions}?` 
-                }) 
-            };
+            const result2 = await chat.sendMessage([{ functionResponse: { name: call.name, response: toolResult } }]);
+            const finalResponse = result2.response.text();
+            return { statusCode: 200, headers, body: JSON.stringify({ reply: finalResponse }) };
         }
 
-        console.log(`Found doctor: ${doctorData.name} (ID: ${doctorData.id})`);
-
-        // Step 2: Check if the time slot is already booked
-        const { data: existingAppointment, error: checkError } = await supabase
-            .from('appointments')
-            .select('id, patient_name')
-            .eq('doctor_id', doctorData.id)
-            .eq('appointment_date', date)
-            .eq('appointment_time', time)
-            .in('status', ['confirmed', 'pending'])
-            .maybeSingle();
-
-        if (checkError) {
-            console.error("Error checking existing appointments:", checkError);
-            throw checkError;
-        }
-
-        if (existingAppointment) {
-            console.log("Time slot already booked:", existingAppointment);
-            return { 
-                statusCode: 409, 
-                headers, 
-                body: JSON.stringify({ 
-                    success: false, 
-                    message: `Sorry, the time slot ${time} on ${date} with Dr. ${doctorData.name} is already booked. Please choose another time.` 
-                }) 
-            };
-        }
-
-        // Step 3: Create the appointment
-        const appointmentData = {
-            patient_name: patientName.trim(),
-            doctor_id: doctorData.id,
-            appointment_date: date,
-            appointment_time: time + ':00', // Ensure seconds are included
-            phone: phone.trim(),
-            status: 'confirmed',
-            created_at: new Date().toISOString()
-        };
-
-        console.log("Creating appointment with data:", appointmentData);
-
-        const { data: newAppointment, error: appointmentError } = await supabase
-            .from('appointments')
-            .insert(appointmentData)
-            .select()
-            .single();
-
-        if (appointmentError) {
-            console.error("Error creating appointment:", appointmentError);
-            throw appointmentError;
-        }
-
-        console.log("Appointment created successfully:", newAppointment);
-
-        return { 
-            statusCode: 200, 
-            headers, 
-            body: JSON.stringify({ 
-                success: true, 
-                message: `Appointment successfully booked with Dr. ${doctorData.name} on ${date} at ${time}.`,
-                appointmentId: newAppointment.id,
-                details: {
-                    doctor: doctorData.name,
-                    patient: patientName,
-                    date: date,
-                    time: time,
-                    phone: phone
-                }
-            }) 
-        };
+        const text = response.text();
+        return { statusCode: 200, headers, body: JSON.stringify({ reply: text }) };
 
     } catch (error: any) {
-        console.error("Unexpected error in bookAppointment:", error);
-        return { 
-            statusCode: 500, 
-            headers, 
-            body: JSON.stringify({ 
-                success: false, 
-                error: "Internal server error while booking appointment.",
-                details: error.message 
-            }) 
-        };
+        console.error("FATAL: Error during Gemini API call or tool execution.", error);
+        return { statusCode: 500, headers, body: JSON.stringify({ error: `Failed to process request.` }) };
     }
 };
 
 export { handler };
+
