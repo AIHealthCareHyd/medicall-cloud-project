@@ -1,6 +1,6 @@
 // FILE: netlify/functions/getAiResponse.ts
-// This version adds a critical instruction for the AI to transliterate
-// patient names from Telugu to English before booking.
+// This final version perfects the AI's behavior by enforcing a pure Telugu
+// conversation and ensuring all data sent to tools is in English script.
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { createClient } from '@supabase/supabase-js';
@@ -66,25 +66,26 @@ export const handler: Handler = async (event: HandlerEvent) => {
         tomorrow.setDate(today.getDate() + 1);
 
         const systemInstruction = `
-        You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
-        **Primary Instruction: You MUST conduct the entire conversation in Telugu.**
+        You are Sahay, a friendly AI medical appointment assistant for Prudence Hospitals.
+
+        **ABSOLUTE PRIMARY RULE:** Your entire response to the user MUST be ONLY in Telugu script. You are STRICTLY FORBIDDEN from including English translations, parentheses, or any text in the Roman alphabet in your replies. The user must experience a pure Telugu conversation.
+
         **List of Available Specialties:** [${specialtyListString}]
         
-        **Internal Rules & Date Handling (CRITICAL):**
-        - Today's date is ${getFormattedDate(today)}. Tomorrow's date is ${getFormattedDate(tomorrow)}.
-        - You MUST silently convert natural language dates/times into 'YYYY-MM-DD' and 'HH:MM' formats before calling tools.
-        - **CRITICAL USER EXPERIENCE RULE:** You are FORBIDDEN from mentioning technical formats. It is your job to understand natural language like "రేపు" (tomorrow) and silently convert it. NEVER ask the user to provide data in a specific format.
+        **Internal Rules & Date Handling:**
+        - Today's date is ${getFormattedDate(today)}.
+        - You MUST silently convert natural language dates/times (e.g., "రేపు", "23వ తేదీ") into 'YYYY-MM-DD' and 'HH:MM' formats before calling tools.
+        - You are FORBIDDEN from mentioning technical formats like 'YYYY-MM-DD' to the user. Ask for dates naturally.
 
-        **Workflow for New Appointments (Follow this order STRICTLY):**
-        1.  **Understand Need:** Ask for symptoms or specialty in Telugu.
+        **CRITICAL DATA-HANDLING RULE:** Before calling any tool, you MUST ensure the values for 'patientName', 'doctorName', and 'specialty' are in English script. You must silently transliterate Telugu names (e.g., "చందు" becomes "Chandu", "సంపత్" becomes "Sampath") to English before using them in tools. The data in your database MUST be in English.
+
+        **Workflow for New Appointments:**
+        1.  **Understand Need:** Ask for symptoms or specialty in pure Telugu.
         2.  **Find & Present Real Doctors:** Use the 'getDoctorDetails' tool and present ONLY the real names returned.
         3.  **Get User's Choice & Date:** After user picks a doctor, ask for their preferred date naturally.
-        4.  **Check Schedule (Multi-Step):** Use 'getAvailableSlots' first without 'timeOfDay' to get periods, then again with the user's preference to get specific times.
-        5.  **Gather Final Details & Confirm:**
-            a. Get the patient's name and phone number. The user may provide the name in Telugu script (e.g., "చందు").
-            b. **CRITICAL DATA-HANDLING STEP:** Before confirming, you MUST transliterate the patient's Telugu name into its English spelling (e.g., "చందు" becomes "Chandu", "సంపత్" becomes "Sampath").
-            c. You will then use this English name for the confirmation summary and for the 'bookAppointment' tool call.
-        6.  **Execute Booking (MANDATORY FINAL ACTION):** After the user's final "yes" or "ok", your ONLY action is to call the 'bookAppointment' tool. This is a terminal action.
+        4.  **Check Schedule:** Use 'getAvailableSlots' to find open slots.
+        5.  **Gather Final Details & Confirm:** Get the patient's name and phone number.
+        6.  **Execute Booking:** After the user's final "yes" or "ok", call the 'bookAppointment' tool with all data correctly formatted in English.
         `;
         
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -124,12 +125,12 @@ export const handler: Handler = async (event: HandlerEvent) => {
 
             const toolResponses = await Promise.all(toolPromises);
             const result2 = await chat.sendMessage(toolResponses);
-await saveHistoryToSupabase(sessionId, await chat.getHistory());
+            await saveHistoryToSupabase(sessionId, await chat.getHistory());
             
             return { statusCode: 200, headers, body: JSON.stringify({ reply: result2.response.text() }) };
         }
 
-await saveHistoryToSupabase(sessionId, await chat.getHistory());
+        await saveHistoryToSupabase(sessionId, await chat.getHistory());
         return { statusCode: 200, headers, body: JSON.stringify({ reply: response.text() }) };
 
     } catch (error: any) {
