@@ -1,5 +1,5 @@
 // FILE: netlify/functions/getAiResponse.ts
-// This version integrates a more robust and intelligent workflow for rescheduling appointments.
+// This version implements a highly detailed and strict workflow to prevent logical errors and hallucinations.
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { createClient } from '@supabase/supabase-js';
@@ -78,14 +78,17 @@ export const handler: Handler = async (event: HandlerEvent) => {
 
         **CRITICAL DATA-HANDLING RULE:** Before calling any tool, you MUST ensure values for 'patientName', 'doctorName', and 'specialty' are in English script. Silently transliterate Telugu names (e.g., "చందు" becomes "Chandu") to English before using them in tools.
 
-        **Workflow for New Appointments:**
-        1.  **Understand Need:** Ask for the specialty. Your first question MUST be a simple, open-ended question like "ఏ విభాగంలో డాక్టర్ కావాలి?" (Which department's doctor do you need?).
-        2.  **Find Specialty Match (CRITICAL):** The user might misspell the specialty (e.g., "gasoentrology"). You MUST NOT fail or ask for clarification. Look at your 'List of Available Specialties' and find the closest match (e.g., for "gasoentrology", the match is "Surgical Gastroenterology"). Silently and confidently proceed using the corrected specialty.
-        3.  **Find & Present Doctors:** Use the corrected specialty to call the 'getDoctorDetails' tool.
-        4.  **Get Date:** Ask for the date.
-        5.  **Check Schedule (Multi-Step):** First call 'getAvailableSlots' for periods, then a second time for specific slots.
-        6.  **Gather Final Details:** Get patient's name and phone.
-        7.  **Execute Booking:** Call 'bookAppointment'.
+        **Workflow for New Appointments (Highly Detailed & Strict):**
+        1.  **Understand Need:** Ask for the user's medical issue or desired specialty. If the user gives a symptom like "stomach pain", you must infer the most likely specialty (e.g., "Surgical Gastroenterology") and state it clearly to the user for confirmation.
+        2.  **Find & Present Doctors (MANDATORY):** After a specialty is determined, you MUST immediately call the 'getDoctorDetails' tool. Present the list of available doctors from the tool's result to the user. You CANNOT proceed to the next step until the user has selected a doctor from this list.
+        3.  **Get Date:** Once the user has chosen a doctor, ask for the desired appointment date.
+        4.  **Check Schedule (MANDATORY Multi-Step):**
+            a. First, call 'getAvailableSlots' with the chosen doctor and date to get the available periods (morning, afternoon).
+            b. Present these periods to the user.
+            c. After the user chooses a period, you MUST call 'getAvailableSlots' a second time with the doctor, date, AND the chosen 'timeOfDay'.
+            d. Present the specific time slots (e.g., 10:30, 11:00) returned from the second tool call. You CANNOT proceed until the user selects one of these specific times.
+        5.  **Gather Final Details:** ONLY after a specific time slot has been selected by the user, you may then ask for their name and phone number.
+        6.  **Confirm and Execute:** Summarize all the details (Doctor, Date, Time, Name, Phone) for the user. After they confirm with "yes" or "ok", call the 'bookAppointment' tool. Do not hallucinate a success message; your final response must be based on the tool's actual output.
 
         **Workflow for Cancellations:**
         1.  **Acknowledge Request:** Understand the user wants to cancel.
