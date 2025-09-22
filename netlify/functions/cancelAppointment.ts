@@ -23,20 +23,35 @@ const handler: Handler = async (event: HandlerEvent) => {
 
         const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
-        const { data: doctorData, error: doctorError } = await supabase.from('doctors').select('id').ilike('name', `%${doctorName}%`).single();
+        const { data: doctorData, error: doctorError } = await supabase.from('doctors').select('id').eq('name', doctorName).single();
         if (doctorError || !doctorData) {
             return { statusCode: 404, headers, body: JSON.stringify({ success: false, message: `Could not find a doctor named ${doctorName}.` }) };
         }
 
-        // Instead of deleting, we update the status to 'cancelled'. This preserves the record.
-        const { error } = await supabase
+        // Find the appointment and update its status to 'cancelled'.
+        const { data: updatedData, error: updateError } = await supabase
             .from('appointments')
             .update({ status: 'cancelled' })
-            .eq('doctor_id', doctorData.id)
-            .ilike('patient_name', `%${patientName}%`) // Use ilike for flexible name matching
-            .eq('appointment_date', date);
+            .match({ 
+                doctor_id: doctorData.id,
+                patient_name: patientName,
+                appointment_date: date,
+                status: 'confirmed' // Only cancel appointments that are currently confirmed
+            })
+            .select(); // Use .select() to verify that a record was updated
 
-        if (error) throw error;
+        if (updateError) throw updateError;
+
+        if (!updatedData || updatedData.length === 0) {
+            return { 
+                statusCode: 404, 
+                headers, 
+                body: JSON.stringify({ 
+                    success: false, 
+                    message: `Could not find a confirmed appointment for ${patientName} with ${doctorName} on ${date} to cancel.` 
+                }) 
+            };
+        }
 
         return { statusCode: 200, headers, body: JSON.stringify({ success: true, message: 'Appointment successfully cancelled.' }) };
 
