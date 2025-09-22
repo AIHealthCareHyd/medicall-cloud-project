@@ -34,6 +34,7 @@ const handler: Handler = async (event: HandlerEvent) => {
             .update({ status: 'cancelled' })
             .match({ 
                 doctor_id: doctorData.id,
+                // --- CHANGE IS HERE: Use exact match for patient name for security ---
                 patient_name: patientName,
                 appointment_date: date,
                 status: 'confirmed' // Only cancel appointments that are currently confirmed
@@ -61,3 +62,4 @@ const handler: Handler = async (event: HandlerEvent) => {
 };
 
 export { handler };
+
