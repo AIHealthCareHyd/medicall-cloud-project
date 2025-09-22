@@ -21,12 +21,20 @@ const handler: Handler = async (event: HandlerEvent) => {
             return { statusCode: 400, headers, body: JSON.stringify({ error: "Missing required appointment details." }) };
         }
         const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
-        const { data: doctorData, error: doctorError } = await supabase.from('doctors').select('id').ilike('name', `%${doctorName}%`).single();
+
+        // --- CHANGE IS HERE: Switched to an exact match for safety ---
+        // This prevents booking for a partial or hallucinated name like "Dr. Srinivas".
+        const { data: doctorData, error: doctorError } = await supabase
+            .from('doctors')
+            .select('id')
+            .eq('name', doctorName) // Use exact match '.eq()' instead of flexible '.ilike()'
+            .single();
+        // --- END OF CHANGE ---
+
         if (doctorError || !doctorData) {
-            return { statusCode: 404, headers, body: JSON.stringify({ success: false, message: `Could not find a doctor named ${doctorName}.` }) };
+            return { statusCode: 404, headers, body: JSON.stringify({ success: false, message: `Could not find a doctor with the exact name ${doctorName}.` }) };
         }
 
-        // --- CHANGE IS HERE: Safety check before booking ---
         const { data: existingAppointment, error: checkError } = await supabase
             .from('appointments')
             .select('id')
@@ -41,8 +49,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         if (existingAppointment) {
             return { statusCode: 409, headers, body: JSON.stringify({ success: false, message: `Sorry, the time slot ${time} with ${doctorName} was just booked by someone else. Please try another time.` }) };
         }
-        // --- END OF CHANGE ---
-
+        
         const { error: appointmentError } = await supabase.from('appointments').insert({ patient_name: patientName, doctor_id: doctorData.id, appointment_date: date, appointment_time: time, phone: phone });
         if (appointmentError) throw appointmentError;
         
