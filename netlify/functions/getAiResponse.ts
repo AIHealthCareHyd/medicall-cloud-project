@@ -105,7 +105,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         const chat = model.startChat({
             history: [
                 { role: "user", parts: [{ text: systemPrompt }] },
-                { role: "model", parts: [{ text: "అర్థమైంది. నేను స్పెల్లింగ్ తప్పులను అంతర్గతంగా సరిచేసి, నిర్ధారణ కోసం అడగకుండా నేరుగా డాక్టర్‌ను కనుగొంటాను. నేను మీకు ఎలా సహాయపడగలను?" }] },
+                { role: "model", parts: [{ text: "అర్థమైంది. నేను వాస్తవ డాక్టర్ల పేర్లను మాత్రమే అందిస్తాను. నేను మీకు ఎలా సహాయపడగలను?" }] },
                 ...history.slice(0, -1)
             ]
         });
