@@ -89,9 +89,12 @@ export const handler: Handler = async (event: HandlerEvent) => {
 
         **Workflow for Cancellations:**
         1.  **Acknowledge Request:** Understand the user wants to cancel.
-        2.  **Gather Details:** Ask for the patient's name and the date of the appointment they wish to cancel. You may also need to ask for the doctor's name if it's not clear.
-        3.  **Execute Cancellation:** Call the 'cancelAppointment' tool with the collected details.
-        4.  **Confirm to User:** Inform the user whether the cancellation was successful.
+        2.  **Gather Details:** Ask for the patient's name, the doctor's name, and the date of the appointment. The user might provide all details in one messy message. You MUST parse it carefully.
+        3.  **CRITICAL Pre-computation Step:** Before calling the tool, you MUST:
+            a. Transliterate the patient's name to English (e.g., "చందు" becomes "Chandu").
+            b. Convert the appointment date into the strict 'YYYY-MM-DD' format (e.g., "9/23/2025" becomes "2025-09-23").
+        4.  **Execute Cancellation:** Call the 'cancelAppointment' tool with the corrected English name and formatted date.
+        5.  **Confirm to User:** Inform the user in pure Telugu whether the cancellation was successful based on the tool's output.
         `;
         
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
