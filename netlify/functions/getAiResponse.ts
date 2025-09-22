@@ -1,5 +1,6 @@
 // FILE: netlify/functions/getAiResponse.ts
-// This version includes the final prompt refinement for a better user experience.
+// This version adds a critical instruction for the AI to transliterate
+// patient names from Telugu to English before booking.
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { createClient } from '@supabase/supabase-js';
@@ -72,16 +73,18 @@ export const handler: Handler = async (event: HandlerEvent) => {
         **Internal Rules & Date Handling (CRITICAL):**
         - Today's date is ${getFormattedDate(today)}. Tomorrow's date is ${getFormattedDate(tomorrow)}.
         - You MUST silently convert natural language dates/times into 'YYYY-MM-DD' and 'HH:MM' formats before calling tools.
-
-        **CRITICAL USER EXPERIENCE RULE:** You are FORBIDDEN from mentioning technical formats like 'YYYY-MM-DD' to the user. It is your job to understand natural language like "రేపు" (tomorrow), "ఎల్లుండి" (day after tomorrow), or "సెప్టెంబర్ 23" and silently convert it. NEVER ask the user to provide data in a specific format. Just ask "ఏ తేదీన అపాయింట్‌మెంట్ కావాలి?" (Which date would you like?).
+        - **CRITICAL USER EXPERIENCE RULE:** You are FORBIDDEN from mentioning technical formats. It is your job to understand natural language like "రేపు" (tomorrow) and silently convert it. NEVER ask the user to provide data in a specific format.
 
         **Workflow for New Appointments (Follow this order STRICTLY):**
         1.  **Understand Need:** Ask for symptoms or specialty in Telugu.
-        2.  **Find & Present Real Doctors:** Use the 'getDoctorDetails' tool and present ONLY the real names returned. Do not hallucinate.
+        2.  **Find & Present Real Doctors:** Use the 'getDoctorDetails' tool and present ONLY the real names returned.
         3.  **Get User's Choice & Date:** After user picks a doctor, ask for their preferred date naturally.
         4.  **Check Schedule (Multi-Step):** Use 'getAvailableSlots' first without 'timeOfDay' to get periods, then again with the user's preference to get specific times.
-        5.  **Gather Final Details & Confirm:** Get patient's name and phone, then confirm all details in Telugu.
-        6.  **Execute Booking (MANDATORY FINAL ACTION):** After the user's final "yes" or "ok", your ONLY action is to call the 'bookAppointment' tool. This is a terminal action; the appointment task is complete after this tool call.
+        5.  **Gather Final Details & Confirm:**
+            a. Get the patient's name and phone number. The user may provide the name in Telugu script (e.g., "చందు").
+            b. **CRITICAL DATA-HANDLING STEP:** Before confirming, you MUST transliterate the patient's Telugu name into its English spelling (e.g., "చందు" becomes "Chandu", "సంపత్" becomes "Sampath").
+            c. You will then use this English name for the confirmation summary and for the 'bookAppointment' tool call.
+        6.  **Execute Booking (MANDATORY FINAL ACTION):** After the user's final "yes" or "ok", your ONLY action is to call the 'bookAppointment' tool. This is a terminal action.
         `;
         
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -121,12 +124,12 @@ export const handler: Handler = async (event: HandlerEvent) => {
 
             const toolResponses = await Promise.all(toolPromises);
             const result2 = await chat.sendMessage(toolResponses);
-            await saveHistoryToSupabase(sessionId, await chat.getHistory());
+await saveHistoryToSupabase(sessionId, await chat.getHistory());
             
             return { statusCode: 200, headers, body: JSON.stringify({ reply: result2.response.text() }) };
         }
 
-        await saveHistoryToSupabase(sessionId, await chat.getHistory());
+await saveHistoryToSupabase(sessionId, await chat.getHistory());
         return { statusCode: 200, headers, body: JSON.stringify({ reply: response.text() }) };
 
     } catch (error: any) {
