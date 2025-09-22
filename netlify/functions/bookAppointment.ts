@@ -23,7 +23,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
         // --- CHANGE IS HERE: Switched to an exact match for safety ---
-        // This prevents booking for a partial or hallucinated name like "Dr. Srinivas".
+        // This prevents booking for a partial or hallucinated name.
         const { data: doctorData, error: doctorError } = await supabase
             .from('doctors')
             .select('id')
@@ -60,4 +60,3 @@ const handler: Handler = async (event: HandlerEvent) => {
 };
 
 export { handler };
-
