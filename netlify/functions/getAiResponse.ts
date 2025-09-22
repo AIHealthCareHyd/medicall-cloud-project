@@ -1,6 +1,5 @@
 // FILE: netlify/functions/getAiResponse.ts
-// This version adds the 'cancelAppointment' tool to the AI's capabilities
-// and provides a workflow for handling cancellations.
+// This version integrates the 'rescheduleAppointment' tool and its corresponding workflow.
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { createClient } from '@supabase/supabase-js';
@@ -89,12 +88,17 @@ export const handler: Handler = async (event: HandlerEvent) => {
 
         **Workflow for Cancellations:**
         1.  **Acknowledge Request:** Understand the user wants to cancel.
-        2.  **Gather Details:** Ask for the patient's name, the doctor's name, and the date of the appointment. The user might provide all details in one messy message. You MUST parse it carefully.
-        3.  **CRITICAL Pre-computation Step:** Before calling the tool, you MUST:
-            a. Transliterate the patient's name to English (e.g., "చందు" becomes "Chandu").
-            b. Convert the appointment date into the strict 'YYYY-MM-DD' format (e.g., "9/23/2025" becomes "2025-09-23").
-        4.  **Execute Cancellation:** Call the 'cancelAppointment' tool with the corrected English name and formatted date.
-        5.  **Confirm to User:** Inform the user in pure Telugu whether the cancellation was successful based on the tool's output.
+        2.  **Gather Details:** Ask for the patient's name, the doctor's name, and the appointment date.
+        3.  **Execute Cancellation:** After pre-computation (transliteration, date formatting), call the 'cancelAppointment' tool.
+        4.  **Confirm to User:** Inform the user if the cancellation was successful.
+
+        **Workflow for Rescheduling:**
+        1.  **Acknowledge Request:** Understand the user wants to reschedule.
+        2.  **Gather OLD Details:** First, ask for the patient's name and the OLD date of the appointment they wish to change.
+        3.  **Gather NEW Details:** After getting the old details, ask for the NEW date and NEW time they want to move the appointment to.
+        4.  **CRITICAL Pre-computation Step:** Before calling the tool, you MUST transliterate the patient's name to English and format BOTH the old and new dates correctly.
+        5.  **Execute Reschedule:** Call the 'rescheduleAppointment' tool with all required details (patientName, doctorName, oldDate, newDate, newTime).
+        6.  **Confirm to User:** Inform the user in pure Telugu if the reschedule was successful.
         `;
         
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -106,8 +110,9 @@ export const handler: Handler = async (event: HandlerEvent) => {
                     { name: "getAvailableSlots", description: "Gets available time slots for a doctor.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, date: { type: "STRING" }, timeOfDay: { type: "STRING", description: "Optional." } }, required: ["doctorName", "date"] } },
                     { name: "getDoctorDetails", description: "Finds doctors by specialty or name.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, specialty: { type: "STRING" } } } },
                     { name: "bookAppointment", description: "Books a medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, phone: { type: "STRING" }, date: { type: "STRING" }, time: { type: "STRING" } }, required: ["doctorName", "patientName", "phone", "date", "time"] } },
-                    // SOLUTION: The cancelAppointment tool is now registered here.
-                    { name: "cancelAppointment", description: "Cancels an existing medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, date: { type: "STRING" } }, required: ["doctorName", "patientName", "date"] } }
+                    { name: "cancelAppointment", description: "Cancels an existing medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, date: { type: "STRING" } }, required: ["doctorName", "patientName", "date"] } },
+                    // SOLUTION: The rescheduleAppointment tool is now registered here.
+                    { name: "rescheduleAppointment", description: "Reschedules an existing medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, oldDate: { type: "STRING" }, newDate: { type: "STRING" }, newTime: { type: "STRING" } }, required: ["doctorName", "patientName", "oldDate", "newDate", "newTime"] } }
                 ]
             }],
         });
