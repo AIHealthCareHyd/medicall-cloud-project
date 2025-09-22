@@ -95,6 +95,7 @@ export const handler: Handler = async (event: HandlerEvent) => {
         }
         
         const currentDate = new Date().toLocaleDateString('en-CA');
+        
         // --- TRANSLATED TEXT ---
         const systemPrompt = `
         మీరు సహాయ్, ప్రూడెన్స్ హాస్పిటల్స్ కోసం స్నేహపూర్వక మరియు అత్యంత కచ్చితమైన AI మెడికల్ అపాయింట్‌మెంట్ అసిస్టెంట్.
