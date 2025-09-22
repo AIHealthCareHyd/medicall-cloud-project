@@ -79,12 +79,13 @@ export const handler: Handler = async (event: HandlerEvent) => {
         **CRITICAL DATA-HANDLING RULE:** Before calling any tool, you MUST ensure values for 'patientName', 'doctorName', and 'specialty' are in English script. Silently transliterate Telugu names (e.g., "చందు" becomes "Chandu") to English before using them in tools.
 
         **Workflow for New Appointments:**
-        1.  **Understand Need:** Ask for specialty.
-        2.  **Find & Present Doctors:** Use 'getDoctorDetails'.
-        3.  **Get Date:** Ask for the date.
-        4.  **Check Schedule (Multi-Step):** First call 'getAvailableSlots' for periods, then a second time for specific slots.
-        5.  **Gather Final Details:** Get patient's name and phone.
-        6.  **Execute Booking:** Call 'bookAppointment'.
+        1.  **Understand Need:** Ask for the specialty. Your first question MUST be a simple, open-ended question like "ఏ విభాగంలో డాక్టర్ కావాలి?" (Which department's doctor do you need?).
+        2.  **Find Specialty Match (CRITICAL):** The user might misspell the specialty (e.g., "gasoentrology"). You MUST NOT fail or ask for clarification. Look at your 'List of Available Specialties' and find the closest match (e.g., for "gasoentrology", the match is "Surgical Gastroenterology"). Silently and confidently proceed using the corrected specialty.
+        3.  **Find & Present Doctors:** Use the corrected specialty to call the 'getDoctorDetails' tool.
+        4.  **Get Date:** Ask for the date.
+        5.  **Check Schedule (Multi-Step):** First call 'getAvailableSlots' for periods, then a second time for specific slots.
+        6.  **Gather Final Details:** Get patient's name and phone.
+        7.  **Execute Booking:** Call 'bookAppointment'.
 
         **Workflow for Cancellations:**
         1.  **Acknowledge Request:** Understand the user wants to cancel.
@@ -95,7 +96,7 @@ export const handler: Handler = async (event: HandlerEvent) => {
         **Workflow for Rescheduling (Intelligent Slot-Filling):**
         1.  **Acknowledge & Assess:** Understand the user wants to reschedule. Your goal is to gather 5 pieces of information: patientName, doctorName, oldDate, newDate, and newTime.
         2.  **Parse Initial Input:** Analyze the user's message and extract any of the 5 required details you can find.
-        3.  **Systematically Ask for Missing Details:** One by one, ask the user for any of the 5 key details that are still missing. Do not ask for everything at once. For example, if you have the patient name but not the old date, ask "మీ పాత అపాయింట్‌మెంట్ తేదీ ఏమిటి?" (What is your old appointment date?).
+        3.  **Systematically Ask for Missing Details:** One by one, ask the user for any of the 5 key details that are still missing.
         4.  **Repeat until Complete:** Continue asking for one missing detail at a time until you have all five.
         5.  **Execute Reschedule:** Once all 5 details are collected and pre-computed (transliterated and formatted), call the 'rescheduleAppointment' tool.
         6.  **Confirm to User:** Inform the user in pure Telugu if the reschedule was successful.
@@ -111,7 +112,6 @@ export const handler: Handler = async (event: HandlerEvent) => {
                     { name: "getDoctorDetails", description: "Finds doctors by specialty or name.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, specialty: { type: "STRING" } } } },
                     { name: "bookAppointment", description: "Books a medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, phone: { type: "STRING" }, date: { type: "STRING" }, time: { type: "STRING" } }, required: ["doctorName", "patientName", "phone", "date", "time"] } },
                     { name: "cancelAppointment", description: "Cancels an existing medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, date: { type: "STRING" } }, required: ["doctorName", "patientName", "date"] } },
-                    // SOLUTION: The rescheduleAppointment tool is now registered here.
                     { name: "rescheduleAppointment", description: "Reschedules an existing medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, oldDate: { type: "STRING" }, newDate: { type: "STRING" }, newTime: { type: "STRING" } }, required: ["doctorName", "patientName", "oldDate", "newDate", "newTime"] } }
                 ]
             }],
