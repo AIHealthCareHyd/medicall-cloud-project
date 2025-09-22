@@ -1,143 +1,156 @@
 // FILE: netlify/functions/getAiResponse.ts
-import { GoogleGenerativeAI, ChatSession } from '@google/generative-ai';
+// THIS IS THE FINAL, COMPLETE, AND ROBUST VERSION.
+
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import { createClient } from '@supabase/supabase-js';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 
-const headers = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type',
-  'Content-Type': 'application/json'
+// Use a single, shared Supabase client instance.
+const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_ANON_KEY!);
+
+// In-memory cache for doctor specialties to reduce database calls.
+const specialtyCache = {
+    specialties: null as string[] | null,
+    lastFetched: 0,
+    ttl: 3600 * 1000 // Cache specialties for 1 hour
 };
 
-/**
- * Initializes the Generative AI model and starts a chat session.
- */
-function initializeChat(apiKey: string, systemPrompt: string, history: any[]): ChatSession {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ 
-        model: "gemini-1.5-flash",
-        tools: {
-            functionDeclarations: [
-                { 
-                    name: "getAvailableSlots", 
-                    description: "Gets available time slots for a doctor. If 'timeOfDay' is not provided, it returns available periods (morning, afternoon). If 'timeOfDay' IS provided, it returns specific times for that period.", 
-                    parameters: { 
-                        type: "OBJECT", 
-                        properties: { 
-                            doctorName: { type: "STRING" }, 
-                            date: { type: "STRING" },
-                            timeOfDay: { type: "STRING", description: "Optional. Can be 'morning', 'afternoon', or 'evening'." } 
-                        }, 
-                        required: ["doctorName", "date"] 
-                    } 
-                },
-                { name: "getAllSpecialties", description: "Gets a list of all unique medical specialties available at the hospital.", parameters: { type: "OBJECT", properties: {} } },
-                { name: "getDoctorDetails", description: "Finds doctors by specialty or name.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, specialty: { type: "STRING" } } } },
-                { name: "bookAppointment", description: "Books a medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, phone: { type: "STRING" }, date: { type: "STRING" }, time: { type: "STRING" } }, required: ["doctorName", "patientName", "phone", "date", "time"] } },
-                { name: "cancelAppointment", description: "Cancels an existing medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, date: { type: "STRING" } }, required: ["doctorName", "patientName", "date"] } },
-                { name: "rescheduleAppointment", description: "Reschedules an existing medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, oldDate: { type: "STRING" }, newDate: { type: "STRING" }, newTime: { type: "STRING" } }, required: ["doctorName", "patientName", "oldDate", "newDate", "newTime"] } },
-            ]
-        }
-    }); 
-    
-    // Construct the initial chat history
-    const chatHistory = [
-        { role: "user", parts: [{ text: systemPrompt }] },
-        // --- TRANSLATED TEXT ---
-        { role: "model", parts: [{ text: "అర్థమైంది. నేను షెడ్యూల్‌లను తనిఖీ చేయడానికి బహుళ-దశల ప్రక్రియను అనుసరిస్తాను. ఈ రోజు అపాయింట్‌మెంట్ బుక్ చేసుకోవడానికి నేను మీకు ఎలా సహాయపడగలను?" }] },
-        ...history.slice(0, -1)
-    ];
+const headers = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Content-Type': 'application/json'
+};
 
-    return model.startChat({ history: chatHistory });
-}
+const getFormattedDate = (date: Date): string => date.toISOString().split('T')[0];
 
-/**
- * Handles the execution of tool function calls.
- */
-async function handleToolCalls(functionCalls: any[], chat: ChatSession, event: HandlerEvent): Promise<string> {
-    const call = functionCalls[0];
-    const host = event.headers.host || 'sahayhealth.netlify.app';
-    const toolUrl = `https://${host}/.netlify/functions/${call.name}`;
-    
-    const toolResponse = await fetch(toolUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(call.args),
-    });
-
-    if (!toolResponse.ok) {
-        const errorText = await toolResponse.text();
-        console.error(`Tool call to ${call.name} failed with status ${toolResponse.status}: ${errorText}`);
-        throw new Error(`Tool call to ${call.name} failed.`);
+const getSpecialties = async (): Promise<string[]> => {
+    const now = Date.now();
+    if (specialtyCache.specialties && (now - specialtyCache.lastFetched < specialtyCache.ttl)) {
+        return specialtyCache.specialties;
     }
+    const { data, error } = await supabase.from('doctors').select('specialty');
+    if (error) {
+        console.error("Error fetching specialties:", error);
+        return [];
+    }
+    const uniqueSpecialties = [...new Set(data.map(doc => doc.specialty))];
+    specialtyCache.specialties = uniqueSpecialties;
+    specialtyCache.lastFetched = now;
+    return uniqueSpecialties;
+};
 
-    const toolResult = await toolResponse.json();
-
-    const result2 = await chat.sendMessage([{ functionResponse: { name: call.name, response: toolResult } }]);
-    return result2.response.text();
+// Functions to get/save history from the 'conversations' table in Supabase.
+async function getHistoryFromSupabase(sessionId: string): Promise<any[]> {
+    const { data, error } = await supabase
+        .from('conversations')
+        .select('history')
+        .eq('session_id', sessionId)
+        .single();
+    
+    // PGRST116 means "not found", which is expected for a new conversation.
+    if (error && error.code !== 'PGRST116') {
+        console.error("Error fetching history:", error);
+        return [];
+    }
+    return data?.history || [];
 }
 
-// --- Main Netlify Function Handler ---
+async function saveHistoryToSupabase(sessionId: string, history: any[]): Promise<void> {
+    const { error } = await supabase
+        .from('conversations')
+        .upsert({ session_id: sessionId, history: history, last_updated: new Date().toISOString() });
+    
+    if (error) {
+        console.error("Error saving history:", error);
+    }
+}
+
 export const handler: Handler = async (event: HandlerEvent) => {
     if (event.httpMethod === 'OPTIONS') {
         return { statusCode: 200, headers, body: JSON.stringify({ message: 'CORS preflight successful' }) };
     }
-
     if (!process.env.GEMINI_API_KEY) {
-        return { statusCode: 500, headers, body: JSON.stringify({ error: "AI configuration error." }) };
+        return { statusCode: 500, headers, body: JSON.stringify({ error: "Configuration error." }) };
     }
-    
+
+    const { sessionId, userMessage } = JSON.parse(event.body || '{}');
+    if (!sessionId || !userMessage) {
+        return { statusCode: 400, headers, body: JSON.stringify({ error: "sessionId and userMessage are required." }) };
+    }
+
     try {
-        const body = JSON.parse(event.body || '{}');
-        const { history } = body;
+        const specialtyListString = (await getSpecialties()).join(', ');
+        const today = new Date(); // Use current server date
+        const tomorrow = new Date(today);
+        tomorrow.setDate(today.getDate() + 1);
 
-        if (!history || !Array.isArray(history) || history.length === 0) {
-            return { statusCode: 400, headers, body: JSON.stringify({ error: "No history provided." }) };
-        }
-        
-        const currentDate = new Date().toLocaleDateString('en-CA');
-        
-        // --- TRANSLATED TEXT ---
-        const systemPrompt = `
-        మీరు సహాయ్, ప్రూడెన్స్ హాస్పిటల్స్ కోసం స్నేహపూర్వక మరియు అత్యంత కచ్చితమైన AI మెడికల్ అపాయింట్‌మెంట్ అసిస్టెంట్.
-
-        **కొత్త అపాయింట్‌మెంట్ల కోసం వర్క్‌ఫ్లో:**
-        1.  **అవసరాన్ని అర్థం చేసుకోండి:** లక్షణాలు లేదా స్పెషాలిటీ కోసం అడగండి.
-        2.  **డాక్టర్‌ను కనుగొనండి:** 'getDoctorDetails' సాధనాన్ని ఉపయోగించి డాక్టర్‌ను కనుగొనండి. వినియోగదారు నిర్ధారించిన తర్వాత, ముందుకు సాగండి.
-        3.  **తేదీని పొందండి:** వినియోగదారుని వారి ఇష్టపడే తేదీని అడగండి.
-        4.  **షెడ్యూల్‌ను తనిఖీ చేయండి (క్లిష్టమైన బహుళ-దశల ప్రక్రియ):**
-            a. **మొదటి కాల్:** డాక్టర్ పేరు మరియు తేదీతో మాత్రమే 'getAvailableSlots' సాధనాన్ని కాల్ చేయండి. ఈ సాధనం అందుబాటులో ఉన్న సమయ వ్యవధులను (ఉదా., ["ఉదయం", "మధ్యాహ్నం"]) అందిస్తుంది.
-            b. **వినియోగదారుని అడగండి:** తిరిగి వచ్చిన సమయ వ్యవధుల ఆధారంగా, వినియోగదారుని వారి ప్రాధాన్యతను అడగండి. ఉదాహరణకు: "డాక్టర్‌కు ఉదయం మరియు మధ్యాహ్నం ఖాళీలు ఉన్నాయి. మీకు ఏది కావాలి?"
-            c. **రెండవ కాల్:** వినియోగదారు ప్రతిస్పందించిన తర్వాత (ఉదా., "ఉదయం"), 'getAvailableSlots' సాధనాన్ని మళ్ళీ కాల్ చేయండి. ఈసారి, వారి ఎంపికను చేర్చండి. (ఉదా., doctorName, date, మరియు timeOfDay: 'morning').
-            d. **నిర్దిష్ట సమయాలను అందించండి:** ఈ సాధనం ఇప్పుడు నిర్దిష్ట సమయాల చిన్న జాబితాను అందిస్తుంది. ఈ ఎంపికలను వినియోగదారునికి అందించండి.
-        5.  **తుది వివరాలను సేకరించండి:** వారు ఒక సమయాన్ని ఎంచుకున్న తర్వాత, రోగి పేరు మరియు ఫోన్ నంబర్‌ను పొందండి.
-        6.  **తుది నిర్ధారణ & బుకింగ్:** అన్ని వివరాలను నిర్ధారించి, ఆపై 'bookAppointment' సాధనాన్ని కాల్ చేయండి.
-        
-        **ఇతర నియమాలు:**
-        - మొదటి 'getAvailableSlots' కాల్ ఖాళీ జాబితాను అందిస్తే, డాక్టర్ ఆ రోజు పూర్తిగా బుక్ అయ్యారని వినియోగదారునికి తెలియజేయండి.
-        - నేటి తేదీ ${currentDate}.
-        - వైద్య సలహా ఇవ్వవద్దు.
+        const systemInstruction = `
+        You are Sahay, a friendly and highly accurate AI medical appointment assistant for Prudence Hospitals.
+        **Primary Instruction: You MUST conduct the entire conversation in Telugu.**
+        **List of Available Specialties:** [${specialtyListString}]
+        **Internal Rules & Date Handling (CRITICAL):**
+        - Today's date is ${getFormattedDate(today)}. Tomorrow's date is ${getFormattedDate(tomorrow)}.
+        - You MUST silently convert natural language dates/times into 'YYYY-MM-DD' and 'HH:MM' formats before calling tools.
+        **Workflow for New Appointments (Follow this order STRICTLY):**
+        1.  **Understand Need:** Ask for symptoms or specialty in Telugu.
+        2.  **Find & Present Real Doctors:** Use the 'getDoctorDetails' tool and present ONLY the real names returned. Do not hallucinate.
+        3.  **Get User's Choice & Date:** After user picks a doctor, ask for their preferred date.
+        4.  **Check Schedule (Multi-Step):** Use 'getAvailableSlots' first without 'timeOfDay' to get periods, then again with the user's preference to get specific times.
+        5.  **Gather Final Details & Confirm:** Get patient's name and phone, then confirm all details in Telugu.
+        6.  **Execute Booking (MANDATORY FINAL ACTION):** After the user's final "yes" or "ok", your ONLY action is to call the 'bookAppointment' tool. This is a terminal action; the appointment task is complete after this tool call.
         `;
-
-        const chat = initializeChat(process.env.GEMINI_API_KEY, systemPrompt, history);
-        const latestUserMessage = history[history.length - 1].parts[0].text;
-
-        const result = await chat.sendMessage(latestUserMessage);
+        
+        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+        const model = genAI.getGenerativeModel({
+            model: "gemini-1.5-flash",
+            systemInstruction: systemInstruction,
+            tools: [{
+                // The placeholder is now filled with your actual tool definitions.
+                functionDeclarations: [
+                    { name: "getAvailableSlots", description: "Gets available time slots for a doctor. If 'timeOfDay' is not provided, it returns available periods (morning/afternoon/evening). If 'timeOfDay' IS provided, it returns specific times.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, date: { type: "STRING" }, timeOfDay: { type: "STRING", description: "Optional. Can be 'morning', 'afternoon', or 'evening'." } }, required: ["doctorName", "date"] } },
+                    { name: "getDoctorDetails", description: "Finds doctors by specialty or name.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, specialty: { type: "STRING" } } } },
+                    { name: "bookAppointment", description: "Books a medical appointment. This is the final step.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, phone: { type: "STRING" }, date: { type: "STRING" }, time: { type: "STRING" } }, required: ["doctorName", "patientName", "phone", "date", "time"] } },
+                    { name: "cancelAppointment", description: "Cancels an existing medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, date: { type: "STRING" } }, required: ["doctorName", "patientName", "date"] } },
+                    { name: "rescheduleAppointment", description: "Reschedules an existing medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, oldDate: { type: "STRING" }, newDate: { type: "STRING" }, newTime: { type: "STRING" } }, required: ["doctorName", "patientName", "oldDate", "newDate", "newTime"] } },
+                ]
+            }],
+        });
+        
+        const history = await getHistoryFromSupabase(sessionId);
+        const chat = model.startChat({ history });
+        const result = await chat.sendMessage(userMessage);
+        
         const response = result.response;
         const functionCalls = response.functionCalls();
 
-        let finalReply: string;
-
         if (functionCalls && functionCalls.length > 0) {
-            finalReply = await handleToolCalls(functionCalls, chat, event);
-        } else {
-            finalReply = response.text();
+            const host = event.headers.host || 'sahayhealth.netlify.app';
+            
+            // Execute all tool calls in parallel and wait for all of them to complete.
+            const toolPromises = functionCalls.map(call => {
+                const toolUrl = `https://${host}/.netlify/functions/${call.name}`;
+                return fetch(toolUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(call.args),
+                }).then(async toolResponse => {
+                    const toolResult = toolResponse.ok ? await toolResponse.json() : { error: `Tool call to ${call.name} failed with status ${toolResponse.status}` };
+                    return { functionResponse: { name: call.name, response: toolResult } };
+                });
+            });
+
+            const toolResponses = await Promise.all(toolPromises);
+            const result2 = await chat.sendMessage(toolResponses);
+            await saveHistoryToSupabase(sessionId, await chat.getHistory());
+            
+            return { statusCode: 200, headers, body: JSON.stringify({ reply: result2.response.text() }) };
         }
 
-        return { statusCode: 200, headers, body: JSON.stringify({ reply: finalReply }) };
+        await saveHistoryToSupabase(sessionId, await chat.getHistory());
+        return { statusCode: 200, headers, body: JSON.stringify({ reply: response.text() }) };
 
     } catch (error: any) {
-        console.error("FATAL: Error in getAiResponse handler.", error);
-        return { statusCode: 500, headers, body: JSON.stringify({ error: `Failed to process request: ${error.message}` }) };
+        console.error("FATAL: Error in getAiResponse.", error);
+        return { statusCode: 500, headers, body: JSON.stringify({ error: `Failed to process request.` }) };
     }
 };
-
