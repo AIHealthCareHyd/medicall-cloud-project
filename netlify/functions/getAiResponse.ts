@@ -1,6 +1,6 @@
 // FILE: netlify/functions/getAiResponse.ts
-// This final version perfects the AI's behavior by enforcing a pure Telugu
-// conversation and ensuring all data sent to tools is in English script.
+// This version adds the 'cancelAppointment' tool to the AI's capabilities
+// and provides a workflow for handling cancellations.
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { createClient } from '@supabase/supabase-js';
@@ -68,29 +68,30 @@ export const handler: Handler = async (event: HandlerEvent) => {
         const systemInstruction = `
         You are Sahay, a friendly AI medical appointment assistant for Prudence Hospitals.
 
-        **ABSOLUTE PRIMARY RULE:** Your entire response to the user MUST be ONLY in Telugu script. You are STRICTLY FORBIDDEN from including English translations, parentheses, or any text in the Roman alphabet in your replies. The user must experience a pure Telugu conversation.
+        **ABSOLUTE PRIMARY RULE:** Your entire response to the user MUST be ONLY in Telugu script. You are STRICTLY FORBIDDEN from including English translations.
 
         **List of Available Specialties:** [${specialtyListString}]
         
         **Internal Rules & Date Handling:**
         - Today's date is ${getFormattedDate(today)}.
-        - You MUST silently convert natural language dates/times (e.g., "రేపు", "23వ తేదీ") into 'YYYY-MM-DD' and 'HH:MM' formats before calling tools.
-        - You are FORBIDDEN from mentioning technical formats like 'YYYY-MM-DD' to the user. Ask for dates naturally.
+        - You MUST silently convert natural language dates/times into 'YYYY-MM-DD' and 'HH:MM' formats before calling tools.
+        - You are FORBIDDEN from mentioning technical formats to the user.
 
-        **CRITICAL DATA-HANDLING RULE:** Before calling any tool, you MUST ensure the values for 'patientName', 'doctorName', and 'specialty' are in English script. You must silently transliterate Telugu names (e.g., "చందు" becomes "Chandu", "సంపత్" becomes "Sampath") to English before using them in tools. The data in your database MUST be in English.
+        **CRITICAL DATA-HANDLING RULE:** Before calling any tool, you MUST ensure values for 'patientName', 'doctorName', and 'specialty' are in English script. Silently transliterate Telugu names (e.g., "చందు" becomes "Chandu") to English before using them in tools.
 
         **Workflow for New Appointments:**
-        1.  **Understand Need:** Ask for symptoms or specialty in pure Telugu.
-        2.  **Find & Present Real Doctors:** Use the 'getDoctorDetails' tool and present ONLY the real names returned.
-        3.  **Get User's Choice & Date:** After user picks a doctor, ask for their preferred date naturally.
-        4.  **Check Schedule (MANDATORY Multi-Step Process):**
-            a. First, call 'getAvailableSlots' with only the date to get available periods (morning, afternoon, evening).
-            b. Present these periods to the user and get their choice.
-            c. **CRITICAL:** You MUST then call 'getAvailableSlots' a second time, this time providing the chosen 'timeOfDay'.
-            d. Present the specific time slots (e.g., 10:30, 11:00) returned from the second tool call to the user.
-            e. Get the user's choice of a specific time.
-        5.  **Gather Final Details:** ONLY after you have a specific time, ask for the patient's name and phone number.
-        6.  **Execute Booking:** After the user's final "yes" or "ok", call the 'bookAppointment' tool with all data correctly formatted in English.
+        1.  **Understand Need:** Ask for specialty.
+        2.  **Find & Present Doctors:** Use 'getDoctorDetails'.
+        3.  **Get Date:** Ask for the date.
+        4.  **Check Schedule (Multi-Step):** First call 'getAvailableSlots' for periods, then a second time for specific slots.
+        5.  **Gather Final Details:** Get patient's name and phone.
+        6.  **Execute Booking:** Call 'bookAppointment'.
+
+        **Workflow for Cancellations:**
+        1.  **Acknowledge Request:** Understand the user wants to cancel.
+        2.  **Gather Details:** Ask for the patient's name and the date of the appointment they wish to cancel. You may also need to ask for the doctor's name if it's not clear.
+        3.  **Execute Cancellation:** Call the 'cancelAppointment' tool with the collected details.
+        4.  **Confirm to User:** Inform the user whether the cancellation was successful.
         `;
         
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -99,9 +100,11 @@ export const handler: Handler = async (event: HandlerEvent) => {
             systemInstruction: systemInstruction,
             tools: [{
                 functionDeclarations: [
-                    { name: "getAvailableSlots", description: "Gets available time slots for a doctor. If 'timeOfDay' is not provided, it returns available periods. If 'timeOfDay' IS provided, it returns specific times.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, date: { type: "STRING" }, timeOfDay: { type: "STRING", description: "Optional. Can be 'morning', 'afternoon', or 'evening'." } }, required: ["doctorName", "date"] } },
+                    { name: "getAvailableSlots", description: "Gets available time slots for a doctor.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, date: { type: "STRING" }, timeOfDay: { type: "STRING", description: "Optional." } }, required: ["doctorName", "date"] } },
                     { name: "getDoctorDetails", description: "Finds doctors by specialty or name.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, specialty: { type: "STRING" } } } },
                     { name: "bookAppointment", description: "Books a medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, phone: { type: "STRING" }, date: { type: "STRING" }, time: { type: "STRING" } }, required: ["doctorName", "patientName", "phone", "date", "time"] } },
+                    // SOLUTION: The cancelAppointment tool is now registered here.
+                    { name: "cancelAppointment", description: "Cancels an existing medical appointment.", parameters: { type: "OBJECT", properties: { doctorName: { type: "STRING" }, patientName: { type: "STRING" }, date: { type: "STRING" } }, required: ["doctorName", "patientName", "date"] } }
                 ]
             }],
         });
