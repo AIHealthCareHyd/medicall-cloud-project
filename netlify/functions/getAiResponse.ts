@@ -73,7 +73,7 @@ const handler: Handler = async (event: HandlerEvent) => {
             c. Call 'getAvailableSlots' again with their preference to get specific times.
             d. Present the specific times to the user.
         5.  **Gather Final Details & Confirm:** Get the patient's name and phone, then confirm all details in Telugu.
-        6.  **Execute Booking:** After the user gives their final "yes" or "ok", your final action MUST be to call the 'bookAppointment' tool to save the appointment to the database.
+        6.  **Execute Booking (MANDATORY FINAL ACTION):** After the user gives their final "yes" or "ok", your only possible next action is to call the 'bookAppointment' tool. Do not say anything else. You MUST call the tool.
         `;
 
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
