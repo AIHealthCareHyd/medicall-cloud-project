@@ -1,5 +1,5 @@
 // FILE: netlify/functions/getAiResponse.ts
-// This version integrates the 'rescheduleAppointment' tool and its corresponding workflow.
+// This version integrates a more robust and intelligent workflow for rescheduling appointments.
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { createClient } from '@supabase/supabase-js';
@@ -92,12 +92,12 @@ export const handler: Handler = async (event: HandlerEvent) => {
         3.  **Execute Cancellation:** After pre-computation (transliteration, date formatting), call the 'cancelAppointment' tool.
         4.  **Confirm to User:** Inform the user if the cancellation was successful.
 
-        **Workflow for Rescheduling:**
-        1.  **Acknowledge Request:** Understand the user wants to reschedule.
-        2.  **Gather OLD Details:** First, ask for the patient's name and the OLD date of the appointment they wish to change.
-        3.  **Gather NEW Details:** After getting the old details, ask for the NEW date and NEW time they want to move the appointment to.
-        4.  **CRITICAL Pre-computation Step:** Before calling the tool, you MUST transliterate the patient's name to English and format BOTH the old and new dates correctly.
-        5.  **Execute Reschedule:** Call the 'rescheduleAppointment' tool with all required details (patientName, doctorName, oldDate, newDate, newTime).
+        **Workflow for Rescheduling (Intelligent Slot-Filling):**
+        1.  **Acknowledge & Assess:** Understand the user wants to reschedule. Your goal is to gather 5 pieces of information: patientName, doctorName, oldDate, newDate, and newTime.
+        2.  **Parse Initial Input:** Analyze the user's message and extract any of the 5 required details you can find.
+        3.  **Systematically Ask for Missing Details:** One by one, ask the user for any of the 5 key details that are still missing. Do not ask for everything at once. For example, if you have the patient name but not the old date, ask "మీ పాత అపాయింట్‌మెంట్ తేదీ ఏమిటి?" (What is your old appointment date?).
+        4.  **Repeat until Complete:** Continue asking for one missing detail at a time until you have all five.
+        5.  **Execute Reschedule:** Once all 5 details are collected and pre-computed (transliterated and formatted), call the 'rescheduleAppointment' tool.
         6.  **Confirm to User:** Inform the user in pure Telugu if the reschedule was successful.
         `;
         
