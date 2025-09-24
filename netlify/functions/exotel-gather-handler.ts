@@ -1,6 +1,5 @@
 // FILE: netlify/functions/exotel-gather-handler.ts
-// This is the robust, stateful version that correctly integrates with all services.
-// This version has been simplified to use Exotel's native TTS for reliability.
+// This version fixes a critical bug by correctly parsing Exotel's parameters.
 
 import type { Handler, HandlerEvent } from '@netlify/functions';
 import twilio from 'twilio';
@@ -8,44 +7,60 @@ import querystring from 'querystring';
 
 const { VoiceResponse } = twilio.twiml;
 
-// This is the main function that handles the back-and-forth conversation.
 export const handler: Handler = async (event: HandlerEvent) => {
+    console.log("--- Exotel Gather Handler Invoked ---");
+
     const response = new VoiceResponse();
     const body = querystring.parse(event.body || '');
 
-    // Use the caller's phone number as the unique session ID for conversation history.
+    console.log("Received body from Exotel:", body);
+
     const sessionId = (body.From as string) || `unknown-caller-${Date.now()}`;
     
-    // Get the user's speech from the last <Gather> instruction.
-    // If it's the first time this handler is called, start the conversation by sending "hello".
-    const userMessage = (body.SpeechResult as string) || 'hello';
+    // --- BUG FIX IS HERE ---
+    // Exotel uses 'SpeechText', not 'SpeechResult' like Twilio.
+    // We now correctly look for 'SpeechText' and default to "hello" for the first turn.
+    const userMessage = (body.SpeechText as string) || 'hello';
+
+    console.log(`Session ID: ${sessionId}`);
+    console.log(`User Message (SpeechText): ${userMessage}`);
+
+    // Check if it's the very first interaction (no speech was gathered yet).
+    const isFirstTurn = !body.SpeechText;
+    console.log(`Is this the first turn of the conversation? ${isFirstTurn}`);
 
     try {
-        // STEP 1: Get the AI's text response from the AI brain.
+        if (isFirstTurn) {
+            // If it's the first turn, play the welcome message.
+            console.log("First turn detected. Playing welcome message.");
+            response.say({ language: 'te-IN' }, "నమస్తే! ప్రూడెన్స్ హాస్పిటల్స్‌కు స్వాగతం.");
+        }
+        
+        // For ALL turns (including the first), we need to get the AI's next response.
+        console.log("Calling getAiResponse function...");
         const aiResponse = await fetch(`https://${event.headers.host}/.netlify/functions/getAiResponse`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ sessionId, userMessage }),
         });
 
+        console.log(`AI Response Status: ${aiResponse.status}`);
         if (!aiResponse.ok) {
-            const errorDetails = await aiResponse.text();
-            throw new Error(`AI response function failed with status ${aiResponse.status}: ${errorDetails}`);
+            throw new Error(`AI response function failed with status ${aiResponse.status}`);
         }
 
         const aiData = await aiResponse.json();
         const teluguText = aiData.reply;
+        console.log("Received text from AI:", teluguText);
 
-        // STEP 2 (REVISED): Instead of converting to audio ourselves, we will tell
-        // Exotel to speak the Telugu text directly using its native TTS engine.
-        response.say({
-            language: 'te-IN', // Specify the language for the TTS engine
-        }, teluguText);
+        // Use Exotel's native TTS to speak the AI's response.
+        response.say({ language: 'te-IN' }, teluguText);
         
-        // STEP 3: Tell Exotel to listen for the user's next response.
+        // After speaking, listen for the user's input.
+        console.log("Adding <Gather> to the response.");
         response.gather({
             input: 'speech',
-            speechTimeout: 'auto', // Exotel will automatically detect when the user stops talking.
+            speechTimeout: 'auto',
             language: 'te-IN',
             action: `https://sahayhealth.netlify.app/.netlify/functions/exotel-gather-handler`,
             method: 'POST',
@@ -53,15 +68,16 @@ export const handler: Handler = async (event: HandlerEvent) => {
 
     } catch (error) {
         console.error("FATAL: Error in exotel-gather-handler:", error);
-        // If anything goes wrong, play a generic error message to the user.
         response.say({ language: 'te-IN' }, "క్షమించండి, ఒక లోపం సంభవించింది. దయచేసి మళ్ళీ ప్రయత్నించండి.");
     }
 
-    // Return the final instructions to Exotel in the valid XML format.
+    const finalTwiML = response.toString();
+    console.log("Final TwiML Response to be sent to Exotel:", finalTwiML);
+
     return {
         statusCode: 200,
         headers: { 'Content-Type': 'text/xml' },
-        body: response.toString(),
+        body: finalTwiML,
     };
 };
 
