@@ -1,5 +1,6 @@
 // FILE: netlify/functions/exotel-gather-handler.ts
 // This is the robust, stateful version that correctly integrates with all services.
+// This version has been simplified to use Exotel's native TTS for reliability.
 
 import type { Handler, HandlerEvent } from '@netlify/functions';
 import twilio from 'twilio';
@@ -12,17 +13,15 @@ export const handler: Handler = async (event: HandlerEvent) => {
     const response = new VoiceResponse();
     const body = querystring.parse(event.body || '');
 
-    // Use the caller's phone number as the unique session ID. This is crucial for maintaining conversation history.
-    // Fallback to a random ID if the 'From' field is somehow missing.
+    // Use the caller's phone number as the unique session ID for conversation history.
     const sessionId = (body.From as string) || `unknown-caller-${Date.now()}`;
     
     // Get the user's speech from the last <Gather> instruction.
-    // If it's the first time this handler is called (i.e., redirected from the inbound call),
-    // we start the conversation by sending "hello" to the AI.
+    // If it's the first time this handler is called, start the conversation by sending "hello".
     const userMessage = (body.SpeechResult as string) || 'hello';
 
     try {
-        // STEP 1: Get the AI's text response from the AI brain, maintaining the session.
+        // STEP 1: Get the AI's text response from the AI brain.
         const aiResponse = await fetch(`https://${event.headers.host}/.netlify/functions/getAiResponse`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -37,27 +36,13 @@ export const handler: Handler = async (event: HandlerEvent) => {
         const aiData = await aiResponse.json();
         const teluguText = aiData.reply;
 
-        // STEP 2: Convert the AI's Telugu text response into playable audio.
-        const ttsResponse = await fetch(`https://${event.headers.host}/.netlify/functions/textToSpeech`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: teluguText }),
-        });
-
-        if (!ttsResponse.ok) {
-            const errorDetails = await ttsResponse.text();
-            throw new Error(`TTS response function failed with status ${ttsResponse.status}: ${errorDetails}`);
-        }
+        // STEP 2 (REVISED): Instead of converting to audio ourselves, we will tell
+        // Exotel to speak the Telugu text directly using its native TTS engine.
+        response.say({
+            language: 'te-IN', // Specify the language for the TTS engine
+        }, teluguText);
         
-        const ttsData = await ttsResponse.json();
-        const audioContent = ttsData.audioContent; // This is a Base64 encoded MP3 string.
-
-        // STEP 3: Tell Exotel to play the generated audio back to the user.
-        // We use a Data URI to play the Base64 audio directly.
-        response.play({}, `data:audio/mp3;base64,${audioContent}`);
-        
-        // STEP 4: Tell Exotel to listen for the user's next response and send it back to this same function.
-        // This creates the conversation loop.
+        // STEP 3: Tell Exotel to listen for the user's next response.
         response.gather({
             input: 'speech',
             speechTimeout: 'auto', // Exotel will automatically detect when the user stops talking.
@@ -69,7 +54,7 @@ export const handler: Handler = async (event: HandlerEvent) => {
     } catch (error) {
         console.error("FATAL: Error in exotel-gather-handler:", error);
         // If anything goes wrong, play a generic error message to the user.
-        response.say({ language: 'te-IN' }, "క్షమించండి, ఒక లోపం సంభవించింది. దయచేసి మళ్ళీ ప్రయత్నించండి."); // "Sorry, an error occurred. Please try again."
+        response.say({ language: 'te-IN' }, "క్షమించండి, ఒక లోపం సంభవించింది. దయచేసి మళ్ళీ ప్రయత్నించండి.");
     }
 
     // Return the final instructions to Exotel in the valid XML format.
