@@ -1,4 +1,7 @@
 {
+  "name": "sahay-health-agent",
+  "version": "1.0.0",
+  "description": "AI Appointment Agent with Exotel integration",
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "@netlify/functions": "^4.1.12",
@@ -15,6 +18,12 @@
     "regenerator-runtime": "^0.14.1",
     "tailwindcss": "^4.1.11",
     "typescript": "^5.8.3",
-    "vite": "^7.0.5"
+    "vite": "^7.0.5",
+    "twilio": "^5.0.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/uuid": "^9.0.0"
   }
 }
+
