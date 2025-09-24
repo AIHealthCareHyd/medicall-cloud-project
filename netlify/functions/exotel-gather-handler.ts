@@ -1,55 +1,82 @@
 // FILE: netlify/functions/exotel-gather-handler.ts
-// This function acts as a translator between Exotel and our main AI brain.
+// This is the robust, stateful version that correctly integrates with all services.
 
 import type { Handler, HandlerEvent } from '@netlify/functions';
+import twilio from 'twilio';
 import querystring from 'querystring';
 
-const handler: Handler = async (event: HandlerEvent) => {
-    // 1. Parse the incoming form data from Exotel
-    const params = querystring.parse(event.body || '');
-    const speechText = params.SpeechText as string || 'No input received.';
+const { VoiceResponse } = twilio.twiml;
 
-    // This is a placeholder for conversation history which we would need to implement
-    // using a database (like Supabase) in a real production system.
-    // For now, we'll create a simple history object for each turn.
-    const historyForAI = [
-        { role: 'user', parts: [{ text: speechText }] }
-    ];
+// This is the main function that handles the back-and-forth conversation.
+export const handler: Handler = async (event: HandlerEvent) => {
+    const response = new VoiceResponse();
+    const body = querystring.parse(event.body || '');
 
-    // 2. Call our main AI brain function internally
-    const aiFunctionUrl = `https://${event.headers.host}/.netlify/functions/getAiResponse`;
-    let aiReplyText = "I'm sorry, I encountered an error.";
+    // Use the caller's phone number as the unique session ID. This is crucial for maintaining conversation history.
+    // Fallback to a random ID if the 'From' field is somehow missing.
+    const sessionId = (body.From as string) || `unknown-caller-${Date.now()}`;
+    
+    // Get the user's speech from the last <Gather> instruction.
+    // If it's the first time this handler is called (i.e., redirected from the inbound call),
+    // we start the conversation by sending "hello" to the AI.
+    const userMessage = (body.SpeechResult as string) || 'hello';
 
     try {
-        const aiResponse = await fetch(aiFunctionUrl, {
+        // STEP 1: Get the AI's text response from the AI brain, maintaining the session.
+        const aiResponse = await fetch(`https://${event.headers.host}/.netlify/functions/getAiResponse`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ history: historyForAI }),
+            body: JSON.stringify({ sessionId, userMessage }),
         });
 
-        if (aiResponse.ok) {
-            const data = await aiResponse.json();
-            aiReplyText = data.reply;
+        if (!aiResponse.ok) {
+            const errorDetails = await aiResponse.text();
+            throw new Error(`AI response function failed with status ${aiResponse.status}: ${errorDetails}`);
         }
+
+        const aiData = await aiResponse.json();
+        const teluguText = aiData.reply;
+
+        // STEP 2: Convert the AI's Telugu text response into playable audio.
+        const ttsResponse = await fetch(`https://${event.headers.host}/.netlify/functions/textToSpeech`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: teluguText }),
+        });
+
+        if (!ttsResponse.ok) {
+            const errorDetails = await ttsResponse.text();
+            throw new Error(`TTS response function failed with status ${ttsResponse.status}: ${errorDetails}`);
+        }
+        
+        const ttsData = await ttsResponse.json();
+        const audioContent = ttsData.audioContent; // This is a Base64 encoded MP3 string.
+
+        // STEP 3: Tell Exotel to play the generated audio back to the user.
+        // We use a Data URI to play the Base64 audio directly.
+        response.play({}, `data:audio/mp3;base64,${audioContent}`);
+        
+        // STEP 4: Tell Exotel to listen for the user's next response and send it back to this same function.
+        // This creates the conversation loop.
+        response.gather({
+            input: 'speech',
+            speechTimeout: 'auto', // Exotel will automatically detect when the user stops talking.
+            language: 'te-IN',
+            action: `https://sahayhealth.netlify.app/.netlify/functions/exotel-gather-handler`,
+            method: 'POST',
+        });
+
     } catch (error) {
-        console.error("Error calling getAiResponse function:", error);
+        console.error("FATAL: Error in exotel-gather-handler:", error);
+        // If anything goes wrong, play a generic error message to the user.
+        response.say({ language: 'te-IN' }, "క్షమించండి, ఒక లోపం సంభవించింది. దయచేసి మళ్ళీ ప్రయత్నించండి."); // "Sorry, an error occurred. Please try again."
     }
 
-    // 3. Convert the AI's text response back into ExoML for Exotel
-    const exomlResponse = `
-        <Response>
-            <Say>${aiReplyText}</Say>
-            <Gather action="/.netlify/functions/exotel-gather-handler" method="POST" speechTimeout="auto">
-                <Say>Is there anything else?</Say>
-            </Gather>
-        </Response>
-    `;
-
+    // Return the final instructions to Exotel in the valid XML format.
     return {
         statusCode: 200,
         headers: { 'Content-Type': 'text/xml' },
-        body: exomlResponse
+        body: response.toString(),
     };
 };
 
-export { handler };
