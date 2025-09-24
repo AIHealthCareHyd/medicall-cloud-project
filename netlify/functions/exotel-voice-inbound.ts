@@ -1,28 +1,35 @@
 // FILE: netlify/functions/exotel-voice-inbound.ts
 // This function handles the initial incoming call from Exotel.
 
-import type { Handler, HandlerEvent } from '@netlify/functions';
+import type { Handler } from '@netlify/functions';
+// We use the Twilio helper library to generate TwiML, which Exotel understands.
+import twilio from 'twilio';
 
-const handler: Handler = async (event: HandlerEvent) => {
-    const headers = {
-        'Content-Type': 'text/xml'
-    };
+const { VoiceResponse } = twilio.twiml;
 
-    // This ExoML now points the <Gather> action to our new translator function.
-    const exomlResponse = `
-        <Response>
-            <Say>Welcome to Prudence Hospitals. Sahay, your AI assistant, is here to help you.</Say>
-            <Gather action="/.netlify/functions/exotel-gather-handler" method="POST" speechTimeout="auto" finishOnKey="#">
-                <Say>How can I help you today?</Say>
-            </Gather>
-        </Response>
-    `;
+export const handler: Handler = async (event) => {
+    const response = new VoiceResponse();
+
+    // The initial greeting message when a user calls.
+    response.say({
+            language: 'te-IN', // Set the language to Telugu
+        },
+        "నమస్తే! ప్రూడెన్స్ హాస్పిటల్స్‌కు స్వాగతం." // "Namaste! Welcome to Prudence Hospitals."
+    );
+
+    // After the greeting, immediately redirect the call to the main conversation handler.
+    response.redirect({
+            method: 'POST',
+        },
+        // IMPORTANT: Ensure this URL matches your live Netlify function path.
+        `https://sahayhealth.netlify.app/.netlify/functions/exotel-gather-handler`
+    );
 
     return {
         statusCode: 200,
-        headers,
-        body: exomlResponse
+        headers: {
+            'Content-Type': 'text/xml',
+        },
+        body: response.toString(),
     };
 };
-
-export { handler };
