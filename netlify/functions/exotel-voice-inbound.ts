@@ -1,35 +1,33 @@
 // FILE: netlify/functions/exotel-voice-inbound.ts
 // This function handles the initial incoming call from Exotel.
 
-import type { Handler } from '@netlify/functions';
-// We use the Twilio helper library to generate TwiML, which Exotel understands.
-import twilio from 'twilio';
+import type { Handler, HandlerEvent } from '@netlify/functions';
 
-const { VoiceResponse } = twilio.twiml;
+const handler: Handler = async (event: HandlerEvent) => {
+    const headers = {
+        'Content-Type': 'text/xml'
+    };
 
-export const handler: Handler = async (event) => {
-    const response = new VoiceResponse();
+    // Construct the full, absolute URL for the action
+    const host = event.headers.host || 'sahayhealth.netlify.app';
+    const gatherUrl = `https://${host}/.netlify/functions/exotel-gather-handler`;
 
-    // The initial greeting message when a user calls.
-    response.say({
-            language: 'te-IN', // Set the language to Telugu
-        },
-        "నమస్తే! ప్రూడెన్స్ హాస్పిటల్స్‌కు స్వాగతం." // "Namaste! Welcome to Prudence Hospitals."
-    );
-
-    // After the greeting, immediately redirect the call to the main conversation handler.
-    response.redirect({
-            method: 'POST',
-        },
-        // IMPORTANT: Ensure this URL matches your live Netlify function path.
-        `https://sahayhealth.netlify.app/.netlify/functions/exotel-gather-handler`
-    );
+    // This ExoML now points the <Gather> action to our new translator function.
+    const exomlResponse = `
+        <Response>
+            <Say>Welcome to Prudence Hospitals. Sahay, your AI assistant, is here to help you.</Say>
+            <Gather action="${gatherUrl}" method="POST" speechTimeout="auto" finishOnKey="#">
+                <Say>How can I help you today?</Say>
+            </Gather>
+        </Response>
+    `;
 
     return {
         statusCode: 200,
-        headers: {
-            'Content-Type': 'text/xml',
-        },
-        body: response.toString(),
+        headers,
+        body: exomlResponse
     };
 };
+
+export { handler };
+
