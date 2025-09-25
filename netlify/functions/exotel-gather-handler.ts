@@ -1,90 +1,99 @@
 // FILE: netlify/functions/exotel-gather-handler.ts
-// This version contains the final logic fix to correctly separate the first-turn greeting from the main conversation loop.
+// PURPOSE: Acts as a stateful bridge between Exotel and the AI brain.
+// It parses Exotel's form data, manages conversation history in Supabase,
+// and calls the getAiResponse function with the correct JSON format.
 
 import type { Handler, HandlerEvent } from '@netlify/functions';
-import twilio from 'twilio';
 import querystring from 'querystring';
+import { supabase } from './lib/supabase-client';
 
-const { VoiceResponse } = twilio.twiml;
+// Define the structure of our conversation history
+type ChatPart = { text: string };
+type ChatMessage = {
+    role: 'user' | 'model';
+    parts: ChatPart[];
+};
 
-export const handler: Handler = async (event: HandlerEvent) => {
-    console.log("--- Exotel Gather Handler Invoked ---");
+const handler: Handler = async (event: HandlerEvent) => {
+    // 1. Parse incoming data from Exotel
+    const params = querystring.parse(event.body || '');
+    const speechText = params.SpeechText as string | undefined;
+    const callSid = params.CallSid as string; // Crucial for session management
 
-    const response = new VoiceResponse();
-    const body = querystring.parse(event.body || '');
-
-    console.log("Received body from Exotel:", body);
-
-    const sessionId = (body.From as string) || `unknown-caller-${Date.now()}`;
-    
-    // Exotel uses 'SpeechText'. This will be undefined on the first turn.
-    const userMessage = body.SpeechText as string;
-    const isFirstTurn = !userMessage;
-
-    console.log(`Session ID: ${sessionId}`);
-    console.log(`User Message (SpeechText): ${userMessage}`);
-    console.log(`Is this the first turn? ${isFirstTurn}`);
-
-    try {
-        if (isFirstTurn) {
-            // --- FIRST TURN LOGIC ---
-            // On the very first turn, we do two things ONLY:
-            // 1. Say the welcome message.
-            // 2. Immediately get the AI's first question.
-            console.log("First turn detected. Getting initial AI response.");
-
-            const aiResponse = await fetch(`https://${event.headers.host}/.netlify/functions/getAiResponse`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                // We send "hello" to trigger the AI's first workflow step.
-                body: JSON.stringify({ sessionId, userMessage: 'hello' }),
-            });
-            
-            if (!aiResponse.ok) throw new Error(`AI response failed: ${aiResponse.status}`);
-            
-            const aiData = await aiResponse.json();
-            console.log("Received initial response from AI:", aiData.reply);
-            response.say({ language: 'te-IN' }, aiData.reply);
-
-        } else {
-            // --- SUBSEQUENT TURNS LOGIC ---
-            // For every other turn, we process the user's actual speech.
-            console.log("Subsequent turn. Processing user speech...");
-            const aiResponse = await fetch(`https://${event.headers.host}/.netlify/functions/getAiResponse`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ sessionId, userMessage }),
-            });
-
-            if (!aiResponse.ok) throw new Error(`AI response failed: ${aiResponse.status}`);
-            
-            const aiData = await aiResponse.json();
-            console.log("Received subsequent response from AI:", aiData.reply);
-            response.say({ language: 'te-IN' }, aiData.reply);
-        }
-        
-        // For ALL turns, after speaking, we listen for the user's next input.
-        console.log("Adding <Gather> to the response.");
-        response.gather({
-            input: 'speech',
-            speechTimeout: 'auto',
-            language: 'te-IN',
-            action: `https://sahayhealth.netlify.app/.netlify/functions/exotel-gather-handler`,
-            method: 'POST',
-        });
-
-    } catch (error) {
-        console.error("FATAL: Error in exotel-gather-handler:", error);
-        response.say({ language: 'te-IN' }, "క్షమించండి, ఒక లోపం సంభవించింది. దయచేసి మళ్ళీ ప్రయత్నించండి.");
+    if (!callSid) {
+        // Exotel should always send a CallSid. If not, we can't proceed.
+        return { statusCode: 400, body: "CallSid is missing." };
     }
 
-    const finalTwiML = response.toString();
-    console.log("Final TwiML Response to be sent to Exotel:", finalTwiML);
+    // 2. Retrieve conversation history from Supabase
+    let history: ChatMessage[] = [];
+    const { data: sessionData, error: sessionError } = await supabase
+        .from('exotel_sessions')
+        .select('history')
+        .eq('call_sid', callSid)
+        .single();
+
+    if (sessionData && sessionData.history) {
+        history = sessionData.history;
+    }
+    
+    // If the user didn't say anything, repeat the last prompt or a generic one.
+    if (!speechText) {
+        const exomlResponse = `
+            <Response>
+                <Say voice="MALE">I'm sorry, I didn't catch that. Could you please repeat?</Say>
+                <Gather action="${event.rawUrl}" method="POST" speechTimeout="auto" finishOnKey="#">
+                </Gather>
+            </Response>
+        `;
+        return { statusCode: 200, headers: { 'Content-Type': 'text/xml' }, body: exomlResponse };
+    }
+
+    // 3. Update history with the user's new message
+    history.push({ role: 'user', parts: [{ text: speechText }] });
+
+    // 4. Call the core AI function with the correct JSON format
+    const host = event.headers.host || 'sahayhealth.netlify.app';
+    const aiFunctionUrl = `https://${host}/.netlify/functions/getAiResponse`;
+    let aiReplyText = "I am sorry, I seem to be having trouble. Please call back later.";
+
+    try {
+        const aiResponse = await fetch(aiFunctionUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ history: history }), // Send the full history
+        });
+
+        if (aiResponse.ok) {
+            const data = await aiResponse.json();
+            aiReplyText = data.reply;
+            // Add AI's response to history for the next turn
+            history.push({ role: 'model', parts: [{ text: aiReplyText }] });
+        }
+    } catch (error) {
+        console.error("Error calling getAiResponse function:", error);
+    }
+
+    // 5. Save the updated history back to Supabase
+    await supabase
+        .from('exotel_sessions')
+        .upsert({ call_sid: callSid, history: history });
+
+    // 6. Respond to Exotel to continue the conversation loop
+    const exomlResponse = `
+        <Response>
+            <Say voice="MALE">${aiReplyText}</Say>
+            <Gather action="${event.rawUrl}" method="POST" speechTimeout="auto" finishOnKey="#">
+                <Say voice="MALE">Is there anything else?</Say>
+            </Gather>
+        </Response>
+    `;
 
     return {
         statusCode: 200,
         headers: { 'Content-Type': 'text/xml' },
-        body: finalTwiML,
+        body: exomlResponse
     };
 };
 
+export { handler };
