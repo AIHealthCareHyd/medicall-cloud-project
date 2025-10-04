@@ -45,6 +45,9 @@ async function saveHistoryToSupabase(sessionId: string, history: any[]): Promise
     if (error) { console.error("Error saving history:", error); }
 }
 
+// FIX 1: Define the model name constant here, outside the handler.
+const MODEL_NAME = "gemini-pro";
+
 export const handler: Handler = async (event: HandlerEvent) => {
     if (event.httpMethod === 'OPTIONS') {
         return { statusCode: 200, headers, body: JSON.stringify({ message: 'CORS preflight successful' }) };
@@ -105,9 +108,10 @@ export const handler: Handler = async (event: HandlerEvent) => {
         6.  **Confirm to User:** Inform the user in pure Telugu if the reschedule was successful.
         `;
         
-        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
         const model = genAI.getGenerativeModel({
-            const MODEL_NAME = "gemini-pro";
+            // FIX 2: Use 'model: MODEL_NAME' as a key-value pair.
+            model: MODEL_NAME,
             systemInstruction: systemInstruction,
             tools: [{
                 functionDeclarations: [
@@ -143,7 +147,7 @@ export const handler: Handler = async (event: HandlerEvent) => {
             });
 
             const toolResponses = await Promise.all(toolPromises);
-            const result2 = await chat.sendMessage(toolResponses);
+            const result2 = await chat.sendMessage(JSON.stringify(toolResponses));
             await saveHistoryToSupabase(sessionId, await chat.getHistory());
             
             return { statusCode: 200, headers, body: JSON.stringify({ reply: result2.response.text() }) };
@@ -157,4 +161,3 @@ export const handler: Handler = async (event: HandlerEvent) => {
         return { statusCode: 500, headers, body: JSON.stringify({ error: `Failed to process request.` }) };
     }
 };
-
