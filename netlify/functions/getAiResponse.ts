@@ -107,7 +107,7 @@ export const handler: Handler = async (event: HandlerEvent) => {
         
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
         const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash",
+            const MODEL_NAME = "gemini-pro";
             systemInstruction: systemInstruction,
             tools: [{
                 functionDeclarations: [
