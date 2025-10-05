@@ -1,6 +1,6 @@
 {
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
+    "@google/generative-ai": "^0.7.1",
     "@netlify/functions": "^4.1.12",
     "@supabase/supabase-js": "^2.52.0",
     "@tailwindcss/postcss": "^4.1.11",
