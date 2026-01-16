@@ -1,8 +1,8 @@
 {
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
-    "@netlify/functions": "^4.1.12",
-    "@supabase/supabase-js": "^2.52.0",
+    "@netlify/functions": "^4.3.0",
+    "@supabase/supabase-js": "^2.90.1",
     "@tailwindcss/postcss": "^4.1.11",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
