@@ -33,6 +33,7 @@ const handler: Handler = async (event: HandlerEvent) => {
             input: { text },
             voice: {
                 languageCode: 'te-IN',
+                // --- CHANGE IS HERE: Using a different, valid Telugu voice name ---
                 name: 'te-IN-Standard-A'
             },
             audioConfig: {

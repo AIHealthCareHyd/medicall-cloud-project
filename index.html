@@ -13,17 +13,9 @@
 <body class="bg-gray-100">
 
     <div id="root"></div>
-    <div>hello</div>
 
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
-
-        function generateUUID() { // Generates a unique ID for the session
-            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-                const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-                return v.toString(16);
-            });
-        }
 
         function App() {
             const [conversation, setConversation] = useState([
@@ -32,60 +24,84 @@
             const [status, setStatus] = useState('idle');
             const [isListeningActive, setIsListeningActive] = useState(false);
             const [inputText, setInputText] = useState('');
-            const [sessionId, setSessionId] = useState('');
-
+            
             const recognitionRef = useRef(null);
             const conversationEndRef = useRef(null);
-            const audioRef = useRef(null);
+            const audioRef = useRef(null); // Ref to control the audio element
 
-            useEffect(() => { setSessionId(generateUUID()); }, []); // Generate session ID on load
+            const scrollToBottom = () => {
+                conversationEndRef.current?.scrollIntoView({ behavior: "smooth" });
+            };
 
             useEffect(() => {
-                conversationEndRef.current?.scrollIntoView({ behavior: "smooth" });
+                scrollToBottom();
             }, [conversation]);
 
+            // --- REWRITTEN SPEAK FUNCTION ---
+            // This now calls our secure backend function to get the audio.
             const speak = async (text) => {
-                if (!text || status === 'speaking') return;
+                if (!text || status === 'speaking') return; // Prevent empty requests or overlaps
                 setStatus('speaking');
                 try {
-                    const response = await fetch('https://sahayhealth.netlify.app/.netlify/functions/textToSpeech', {
+                    const ttsFunctionUrl = 'https://sahayhealth.netlify.app/.netlify/functions/textToSpeech';
+                    const response = await fetch(ttsFunctionUrl, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ text }),
                     });
-                    if (!response.ok) throw new Error(`TTS service failed with status ${response.status}`);
+
+                    if (!response.ok) {
+                        throw new Error(`Text-to-speech service failed with status ${response.status}`);
+                    }
+
                     const data = await response.json();
                     if (data.audioContent) {
-                        audioRef.current.src = `data:audio/mp3;base64,${data.audioContent}`;
-                        await audioRef.current.play();
-                    } else { throw new Error("No audio content received."); }
+                        const audioSrc = `data:audio/mp3;base64,${data.audioContent}`;
+                        if (audioRef.current) {
+                            audioRef.current.src = audioSrc;
+                            await audioRef.current.play();
+                        }
+                    } else {
+                        throw new Error("No audio content received from the server.");
+                    }
                 } catch (error) {
-                    console.error("Error playing speech:", error);
-                    setStatus('idle');
+                    console.error("Error playing synthesized speech:", error);
+                    setStatus('idle'); // Reset status on error
                 }
             };
             
-            const getAiReply = async (latestMessageText) => {
+            const getAiReply = async (currentConversation) => {
                 setStatus('thinking');
+                const historyForApi = currentConversation.map(turn => ({
+                    role: turn.role,
+                    parts: [{ text: turn.text }]
+                }));
+
+                const functionUrl = 'https://sahayhealth.netlify.app/.netlify/functions/getAiResponse';
+
                 try {
-                    const response = await fetch('https://sahayhealth.netlify.app/.netlify/functions/getAiResponse', {
+                    const response = await fetch(functionUrl, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ sessionId, userMessage: latestMessageText }),
+                        body: JSON.stringify({ history: historyForApi }),
                     });
+
                     if (!response.ok) {
                         const errorData = await response.json();
                         throw new Error(`Network error: ${response.status} - ${errorData.error || response.statusText}`);
                     }
+
                     const data = await response.json();
                     const aiReplyText = data.reply || "క్షమించండి, నాకు అర్థం కాలేదు.";
+                    
                     setConversation(prev => [...prev, { role: 'model', text: aiReplyText }]);
                     await speak(aiReplyText);
+                    
                 } catch (error) {
                     console.error("Error fetching AI response:", error);
                     const errorText = `An error occurred: ${error.message}`;
                     setConversation(prev => [...prev, { role: 'model', text: errorText }]);
-                    await speak("క్షమించండి, ఒక లోపం సంభవించింది.");
+                    await speak("క్షమించండి, ఒక లోపం సంభవించింది.").catch(e => console.error("Error speaking the error message:", e));
                 }
             };
 
@@ -93,45 +109,76 @@
                 e.preventDefault();
                 const trimmedInput = inputText.trim();
                 if (!trimmedInput) return;
-                setConversation(prev => [...prev, { role: 'user', text: trimmedInput }]);
+                const newConversation = [...conversation, { role: 'user', text: trimmedInput }];
+                setConversation(newConversation);
                 setInputText('');
-                getAiReply(trimmedInput);
+                getAiReply(newConversation);
             };
 
             const toggleListening = () => {
                 if (isListeningActive) {
                     recognitionRef.current?.stop();
                 } else {
-                    try { recognitionRef.current?.start(); } 
-                    catch(e) { console.error("Recognition start error:", e); setStatus('idle'); }
+                    setStatus('listening');
+                    try {
+                        recognitionRef.current?.start();
+                    } catch(e) {
+                        console.error("Error starting recognition:", e);
+                        setStatus('idle');
+                    }
                 }
             };
 
             useEffect(() => {
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-                if (!SpeechRecognition) return;
-                const recognition = new SpeechRecognition();
-                recognition.continuous = false;
-                recognition.interimResults = false;
-                recognition.lang = 'te-IN';
-                recognition.onstart = () => { setIsListeningActive(true); setStatus('listening'); };
-                recognition.onend = () => { setIsListeningActive(false); setStatus('idle'); };
-                recognition.onerror = (event) => console.error("Speech recognition error:", event.error);
-                recognition.onresult = (event) => {
-                    const transcript = event.results[0][0].transcript.trim();
-                    if (transcript) {
-                        setConversation(prev => [...prev, { role: 'user', text: transcript }]);
-                        getAiReply(transcript);
-                    }
-                };
-                recognitionRef.current = recognition;
-            }, [sessionId]);
+                if (!SpeechRecognition) {
+                    console.warn("Speech recognition not supported.");
+                    return;
+                }
+                recognitionRef.current = new SpeechRecognition();
+                recognitionRef.current.continuous = false;
+                recognitionRef.current.interimResults = false;
+                recognitionRef.current.lang = 'te-IN';
+            }, []);
 
             useEffect(() => {
-                if (!audioRef.current) return;
-                const handleAudioEnd = () => setStatus('idle');
-                audioRef.current.addEventListener('ended', handleAudioEnd);
-                return () => audioRef.current?.removeEventListener('ended', handleAudioEnd);
+                const recognition = recognitionRef.current;
+                if (!recognition) return;
+                
+                recognition.onstart = () => { setIsListeningActive(true); setStatus('listening'); };
+                recognition.onend = () => { setIsListeningActive(false); setStatus('idle'); };
+                recognition.onerror = (event) => { console.error("Speech recognition error:", event.error); };
+                recognition.onresult = (event) => {
+                    const transcript = event.results[0][0].transcript.trim();
+                    if(transcript) {
+                        setConversation(prev => {
+                            const updatedConversation = [...prev, { role: 'user', text: transcript }];
+                            getAiReply(updatedConversation);
+                            return updatedConversation;
+                        });
+                    }
+                };
+
+                return () => {
+                    if (recognitionRef.current) {
+                        recognitionRef.current.onstart = null;
+                        recognitionRef.current.onend = null;
+                        recognitionRef.current.onerror = null;
+                        recognitionRef.current.onresult = null;
+                    }
+                };
+            }, []);
+
+            useEffect(() => {
+                if (audioRef.current) {
+                    const handleAudioEnd = () => setStatus('idle');
+                    audioRef.current.addEventListener('ended', handleAudioEnd);
+                    return () => {
+                        if (audioRef.current) {
+                            audioRef.current.removeEventListener('ended', handleAudioEnd);
+                        }
+                    };
+                }
             }, [audioRef.current]);
 
             return (
@@ -151,28 +198,32 @@
                             <div ref={conversationEndRef} />
                         </div>
                         <div className="p-4 border-t">
-                             { (status !== 'idle') &&
+                             { (status === 'thinking' || status === 'speaking' || status === 'listening') &&
                                 <p className="text-center text-sm text-gray-500 mb-2 italic">
                                     {status === 'listening' ? 'వింటున్నారు...' : status === 'thinking' ? 'సహాయ్ ఆలోచిస్తున్నారు...' : 'సహాయ్ మాట్లాడుతున్నారు...'}
                                 </p>
                              }
                             <form onSubmit={handleTextSubmit} className="flex items-center gap-2">
                                 <input
-                                    type="text" value={inputText}
+                                    type="text"
+                                    value={inputText}
                                     onChange={(e) => setInputText(e.target.value)}
                                     placeholder="మీ సందేశాన్ని టైప్ చేయండి..."
                                     className="flex-1 p-3 border rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    disabled={status !== 'idle' || !sessionId}
+                                    disabled={status !== 'idle'}
                                 />
-                                <button type="submit"
+                                <button
+                                    type="submit"
                                     className="bg-blue-500 text-white rounded-full w-12 h-12 flex items-center justify-center hover:bg-blue-600 disabled:bg-gray-400"
-                                    disabled={status !== 'idle' || !inputText.trim() || !sessionId}
+                                    disabled={status !== 'idle' || !inputText.trim()}
                                 >
                                     <i className="fas fa-paper-plane"></i>
                                 </button>
-                                <button type="button" onClick={toggleListening}
+                                <button
+                                    type="button"
+                                    onClick={toggleListening}
                                     className={`${isListeningActive ? 'bg-red-500' : 'bg-green-500'} text-white rounded-full w-12 h-12 flex items-center justify-center hover:bg-opacity-90 disabled:bg-gray-400`}
-                                    disabled={status === 'thinking' || status === 'speaking' || !sessionId}
+                                    disabled={status === 'thinking' || status === 'speaking'}
                                 >
                                     <i className={`fas ${isListeningActive ? 'fa-stop' : 'fa-microphone'}`}></i>
                                 </button>
@@ -182,8 +233,12 @@
                 </div>
             );
         }
-        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
+        root.render(<App />);
     </script>
 
 </body>
-</html>
+</html>  
+

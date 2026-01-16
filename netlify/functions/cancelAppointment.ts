@@ -1,5 +1,5 @@
 // FILE: netlify/functions/cancelAppointment.ts
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from './lib/supabaseClient';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 
 const headers = {
@@ -9,57 +9,77 @@ const headers = {
 };
 
 const handler: Handler = async (event: HandlerEvent) => {
+    // 1. Handle CORS preflight
     if (event.httpMethod === 'OPTIONS') {
-        return { statusCode: 200, headers };
+        return { statusCode: 200, headers, body: JSON.stringify({ message: 'CORS preflight successful' }) };
     }
-    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
-        return { statusCode: 500, headers, body: JSON.stringify({ error: "Database configuration error." }) };
-    }
+
     try {
+        // 2. Parse and Validate Request
         const { doctorName, patientName, date } = JSON.parse(event.body || '{}');
+        
         if (!doctorName || !patientName || !date) {
-            return { statusCode: 400, headers, body: JSON.stringify({ error: "Missing details for cancellation." }) };
-        }
-
-        const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
-
-        const { data: doctorData, error: doctorError } = await supabase.from('doctors').select('id').eq('name', doctorName).single();
-        if (doctorError || !doctorData) {
-            return { statusCode: 404, headers, body: JSON.stringify({ success: false, message: `Could not find a doctor named ${doctorName}.` }) };
-        }
-
-        // Find the appointment and update its status to 'cancelled'.
-        const { data: updatedData, error: updateError } = await supabase
-            .from('appointments')
-            .update({ status: 'cancelled' })
-            .match({ 
-                doctor_id: doctorData.id,
-                // Use exact match for patient name for security
-                patient_name: patientName,
-                appointment_date: date,
-                status: 'confirmed' // Only cancel appointments that are currently confirmed
-            })
-            .select(); // Use .select() to verify that a record was updated
-
-        if (updateError) throw updateError;
-
-        if (!updatedData || updatedData.length === 0) {
             return { 
-                statusCode: 404, 
+                statusCode: 400, 
                 headers, 
-                body: JSON.stringify({ 
-                    success: false, 
-                    message: `Could not find a confirmed appointment for ${patientName} with ${doctorName} on ${date} to cancel.` 
-                }) 
+                body: JSON.stringify({ error: "Missing details required for cancellation." }) 
             };
         }
 
-        return { statusCode: 200, headers, body: JSON.stringify({ success: true, message: 'Appointment successfully cancelled.' }) };
+        // 3. Find Doctor ID (Using centralized 'supabase' client)
+        const { data: doctorData, error: doctorError } = await supabase
+            .from('doctors')
+            .select('id')
+            .ilike('name', `%${doctorName}%`)
+            .single();
+
+        if (doctorError || !doctorData) {
+            return { 
+                statusCode: 404, 
+                headers, 
+                body: JSON.stringify({ success: false, message: `Could not find a doctor named ${doctorName}.` }) 
+            };
+        }
+
+        // 4. Update Appointment Status
+        // Soft-cancel by changing status to 'cancelled' to keep the audit trail.
+        const { data: updatedData, error } = await supabase
+            .from('appointments')
+            .update({ status: 'cancelled' })
+            .eq('doctor_id', doctorData.id)
+            .ilike('patient_name', `%${patientName}%`)
+            .eq('appointment_date', date)
+            .eq('status', 'confirmed') // Only cancel confirmed appointments
+            .select();
+
+        if (error) throw error;
+
+        // 5. Check if an actual row was updated
+        if (!updatedData || updatedData.length === 0) {
+            return {
+                statusCode: 404,
+                headers,
+                body: JSON.stringify({ 
+                    success: false, 
+                    message: `No confirmed appointment found for ${patientName} on ${date} with ${doctorName}.` 
+                })
+            };
+        }
+
+        return { 
+            statusCode: 200, 
+            headers, 
+            body: JSON.stringify({ success: true, message: 'Appointment successfully cancelled.' }) 
+        };
 
     } catch (error: any) {
-        return { statusCode: 500, headers, body: JSON.stringify({ success: false, message: error.message }) };
+        console.error("Cancellation Error:", error.message);
+        return { 
+            statusCode: 500, 
+            headers, 
+            body: JSON.stringify({ success: false, message: error.message }) 
+        };
     }
 };
 
 export { handler };
-

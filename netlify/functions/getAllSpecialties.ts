@@ -1,5 +1,5 @@
 // FILE: netlify/functions/getAllSpecialties.ts
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from './lib/supabaseClient';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 
 const headers = {
@@ -9,20 +9,37 @@ const headers = {
 };
 
 const handler: Handler = async (event: HandlerEvent) => {
+    // 1. Handle CORS preflight
     if (event.httpMethod === 'OPTIONS') {
         return { statusCode: 200, headers, body: JSON.stringify({ message: 'CORS preflight successful' }) };
     }
-    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
-        return { statusCode: 500, headers, body: JSON.stringify({ error: "Database configuration error." }) };
-    }
+
     try {
-        const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
-        const { data, error } = await supabase.from('doctors').select('specialty');
+        // 2. Fetch all specialties (Using centralized 'supabase' client)
+        // We select only the 'specialty' column to keep the data transfer light
+        const { data, error } = await supabase
+            .from('doctors')
+            .select('specialty');
+
         if (error) throw error;
+
+        // 3. Extract unique values
+        // This ensures the AI doesn't see "Radiology" listed multiple times
         const uniqueSpecialties = [...new Set(data.map(doctor => doctor.specialty))];
-        return { statusCode: 200, headers, body: JSON.stringify({ specialties: uniqueSpecialties }) };
+
+        return { 
+            statusCode: 200, 
+            headers, 
+            body: JSON.stringify({ specialties: uniqueSpecialties }) 
+        };
+
     } catch (error: any) {
-        return { statusCode: 500, headers, body: JSON.stringify({ success: false, message: error.message }) };
+        console.error("Error in getAllSpecialties:", error.message);
+        return { 
+            statusCode: 500, 
+            headers, 
+            body: JSON.stringify({ success: false, message: error.message }) 
+        };
     }
 };
 
