@@ -1,9 +1,11 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 
+// 1. The Permission Slip (CORS Headers)
 const headers = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Content-Type': 'application/json'
 };
 
@@ -12,24 +14,31 @@ const getFormattedDate = (date: Date): string => {
 }
 
 export const handler: Handler = async (event: HandlerEvent) => {
+    // 2. Handle the "Security Pre-Check" (OPTIONS)
     if (event.httpMethod === 'OPTIONS') {
-        return { statusCode: 200, headers, body: JSON.stringify({ message: 'CORS success' }) };
+        return { 
+            statusCode: 200, 
+            headers, 
+            body: JSON.stringify({ message: 'CORS preflight match successful' }) 
+        };
     }
 
+    // --- Start of Main Logic ---
+
     if (!process.env.GEMINI_API_KEY) {
-        return { statusCode: 500, headers, body: JSON.stringify({ error: "AI configuration error." }) };
+        return { statusCode: 500, headers, body: JSON.stringify({ error: "AI configuration error: API Key missing." }) };
     }
 
     let body;
     try {
         body = JSON.parse(event.body || '{}');
     } catch (e) {
-        return { statusCode: 400, headers, body: JSON.stringify({ error: "Invalid request body." }) };
+        return { statusCode: 400, headers, body: JSON.stringify({ error: "Invalid request body: JSON parse failed." }) };
     }
     
     const { history } = body;
     if (!history || !Array.isArray(history)) {
-        return { statusCode: 400, headers, body: JSON.stringify({ error: "No history provided." }) };
+        return { statusCode: 400, headers, body: JSON.stringify({ error: "Invalid history: Must be an array." }) };
     }
     
     const todayStr = getFormattedDate(new Date());
@@ -100,10 +109,10 @@ export const handler: Handler = async (event: HandlerEvent) => {
         const response = result.response;
         const functionCalls = response.functionCalls();
 
+        // 3. Handle Tool Calling
         if (functionCalls && functionCalls.length > 0) {
             const call = functionCalls[0];
             
-            // Build the URL to call the tool
             const host = event.headers.host || 'localhost:8888';
             const protocol = host.includes('localhost') ? 'http' : 'https';
             const toolUrl = `${protocol}://${host}/.netlify/functions/${call.name}`;
@@ -117,13 +126,26 @@ export const handler: Handler = async (event: HandlerEvent) => {
             const toolResult = await toolResponse.json();
             const result2 = await chat.sendMessage([{ functionResponse: { name: call.name, response: toolResult } }]);
             
-            return { statusCode: 200, headers, body: JSON.stringify({ reply: result2.response.text() }) };
+            return { 
+                statusCode: 200, 
+                headers, 
+                body: JSON.stringify({ reply: result2.response.text() }) 
+            };
         }
 
-        return { statusCode: 200, headers, body: JSON.stringify({ reply: response.text() }) };
+        // 4. Final Text Response
+        return { 
+            statusCode: 200, 
+            headers, 
+            body: JSON.stringify({ reply: response.text() }) 
+        };
 
     } catch (error: any) {
         console.error("Brain Error:", error);
-        return { statusCode: 500, headers, body: JSON.stringify({ error: "Failed to process request." }) };
+        return { 
+            statusCode: 500, 
+            headers, 
+            body: JSON.stringify({ error: "Failed to process request: " + error.message }) 
+        };
     }
 };

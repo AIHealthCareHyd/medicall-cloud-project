@@ -1,32 +1,37 @@
-// FILE: netlify/functions/cancelAppointment.ts
 import { supabase } from './lib/supabaseClient';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 
+// 1. The Permission Slip (CORS Headers)
 const headers = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Content-Type': 'application/json'
 };
 
-const handler: Handler = async (event: HandlerEvent) => {
-    // 1. Handle CORS preflight
+export const handler: Handler = async (event: HandlerEvent) => {
+    // 2. Handle the "Security Pre-Check" (OPTIONS)
     if (event.httpMethod === 'OPTIONS') {
-        return { statusCode: 200, headers, body: JSON.stringify({ message: 'CORS preflight successful' }) };
+        return { 
+            statusCode: 200, 
+            headers, 
+            body: JSON.stringify({ message: 'CORS preflight match successful' }) 
+        };
     }
 
     try {
-        // 2. Parse and Validate Request
+        // 3. Parse and Validate Request
         const { doctorName, patientName, date } = JSON.parse(event.body || '{}');
         
         if (!doctorName || !patientName || !date) {
             return { 
                 statusCode: 400, 
                 headers, 
-                body: JSON.stringify({ error: "Missing details required for cancellation." }) 
+                body: JSON.stringify({ success: false, error: "Missing details required for cancellation." }) 
             };
         }
 
-        // 3. Find Doctor ID (Using centralized 'supabase' client)
+        // 4. Find Doctor ID
         const { data: doctorData, error: doctorError } = await supabase
             .from('doctors')
             .select('id')
@@ -41,8 +46,7 @@ const handler: Handler = async (event: HandlerEvent) => {
             };
         }
 
-        // 4. Update Appointment Status
-        // Soft-cancel by changing status to 'cancelled' to keep the audit trail.
+        // 5. Update Appointment Status (Soft-cancel)
         const { data: updatedData, error } = await supabase
             .from('appointments')
             .update({ status: 'cancelled' })
@@ -54,7 +58,7 @@ const handler: Handler = async (event: HandlerEvent) => {
 
         if (error) throw error;
 
-        // 5. Check if an actual row was updated
+        // 6. Check if an actual row was updated
         if (!updatedData || updatedData.length === 0) {
             return {
                 statusCode: 404,
@@ -73,7 +77,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         };
 
     } catch (error: any) {
-        console.error("Cancellation Error:", error.message);
+        console.error("Cancellation Tool Error:", error.message);
         return { 
             statusCode: 500, 
             headers, 
@@ -81,5 +85,3 @@ const handler: Handler = async (event: HandlerEvent) => {
         };
     }
 };
-
-export { handler };

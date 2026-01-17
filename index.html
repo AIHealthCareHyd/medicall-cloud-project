@@ -27,7 +27,7 @@
             
             const recognitionRef = useRef(null);
             const conversationEndRef = useRef(null);
-            const audioRef = useRef(null); // Ref to control the audio element
+            const audioRef = useRef(null); 
 
             const scrollToBottom = () => {
                 conversationEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -37,13 +37,12 @@
                 scrollToBottom();
             }, [conversation]);
 
-            // --- REWRITTEN SPEAK FUNCTION ---
-            // This now calls our secure backend function to get the audio.
             const speak = async (text) => {
-                if (!text || status === 'speaking') return; // Prevent empty requests or overlaps
+                if (!text || status === 'speaking') return; 
                 setStatus('speaking');
                 try {
-                    const ttsFunctionUrl = 'https://sahayhealth.netlify.app/.netlify/functions/textToSpeech';
+                    // Optimized to relative path for Local/Live compatibility
+                    const ttsFunctionUrl = '/.netlify/functions/textToSpeech';
                     const response = await fetch(ttsFunctionUrl, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -51,7 +50,7 @@
                     });
 
                     if (!response.ok) {
-                        throw new Error(`Text-to-speech service failed with status ${response.status}`);
+                        throw new Error(`TTS service failed: ${response.status}`);
                     }
 
                     const data = await response.json();
@@ -62,11 +61,11 @@
                             await audioRef.current.play();
                         }
                     } else {
-                        throw new Error("No audio content received from the server.");
+                        throw new Error("No audio content received.");
                     }
                 } catch (error) {
-                    console.error("Error playing synthesized speech:", error);
-                    setStatus('idle'); // Reset status on error
+                    console.error("Speech Error:", error);
+                    setStatus('idle'); 
                 }
             };
             
@@ -77,7 +76,8 @@
                     parts: [{ text: turn.text }]
                 }));
 
-                const functionUrl = 'https://sahayhealth.netlify.app/.netlify/functions/getAiResponse';
+                // Optimized to relative path for Local/Live compatibility
+                const functionUrl = '/.netlify/functions/getAiResponse';
 
                 try {
                     const response = await fetch(functionUrl, {
@@ -88,7 +88,7 @@
 
                     if (!response.ok) {
                         const errorData = await response.json();
-                        throw new Error(`Network error: ${response.status} - ${errorData.error || response.statusText}`);
+                        throw new Error(`AI error: ${errorData.error || response.statusText}`);
                     }
 
                     const data = await response.json();
@@ -98,10 +98,10 @@
                     await speak(aiReplyText);
                     
                 } catch (error) {
-                    console.error("Error fetching AI response:", error);
-                    const errorText = `An error occurred: ${error.message}`;
+                    console.error("AI Fetch Error:", error);
+                    const errorText = "క్షమించండి, సర్వర్ కనెక్ట్ చేయడంలో సమస్య ఉంది.";
                     setConversation(prev => [...prev, { role: 'model', text: errorText }]);
-                    await speak("క్షమించండి, ఒక లోపం సంభవించింది.").catch(e => console.error("Error speaking the error message:", e));
+                    await speak(errorText).catch(e => console.error(e));
                 }
             };
 
@@ -123,7 +123,7 @@
                     try {
                         recognitionRef.current?.start();
                     } catch(e) {
-                        console.error("Error starting recognition:", e);
+                        console.error("Mic start error:", e);
                         setStatus('idle');
                     }
                 }
@@ -147,7 +147,7 @@
                 
                 recognition.onstart = () => { setIsListeningActive(true); setStatus('listening'); };
                 recognition.onend = () => { setIsListeningActive(false); setStatus('idle'); };
-                recognition.onerror = (event) => { console.error("Speech recognition error:", event.error); };
+                recognition.onerror = (event) => { console.error("Mic error:", event.error); setStatus('idle'); };
                 recognition.onresult = (event) => {
                     const transcript = event.results[0][0].transcript.trim();
                     if(transcript) {
@@ -184,24 +184,31 @@
             return (
                 <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 font-sans p-4">
                     <audio ref={audioRef} style={{ display: 'none' }} />
-                    <div className="w-full max-w-md h-[80vh] flex flex-col bg-white rounded-lg shadow-xl">
-                        <div className="text-center p-4 border-b">
-                            <h1 className="text-2xl font-bold text-blue-900">PRUDENCE HOSPITALS</h1>
-                            <p className="text-sm text-gray-500">AI Health Assistant</p>
+                    <div className="w-full max-w-md h-[85vh] flex flex-col bg-white rounded-2xl shadow-2xl overflow-hidden">
+                        <div className="text-center p-6 bg-blue-900 text-white shadow-md">
+                            <h1 className="text-xl font-bold tracking-tight">PRUDENCE HOSPITALS</h1>
+                            <p class="text-[10px] uppercase tracking-widest text-blue-200">Sahay AI Health Assistant</p>
                         </div>
-                        <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3 border-t">
+                        <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3 bg-gray-50">
                             {conversation.map((turn, index) => (
-                                <div key={index} className={`p-3 rounded-lg max-w-[85%] w-fit ${turn.role === 'user' ? 'bg-blue-500 text-white self-end' : 'bg-gray-200 text-gray-800 self-start'}`}>
-                                    <p>{turn.text}</p>
+                                <div key={index} className={`p-3 rounded-2xl max-w-[85%] shadow-sm ${turn.role === 'user' ? 'bg-blue-600 text-white self-end rounded-tr-none' : 'bg-white text-gray-800 self-start border border-gray-200 rounded-tl-none'}`}>
+                                    <p className="text-sm leading-relaxed">{turn.text}</p>
                                 </div>
                             ))}
                             <div ref={conversationEndRef} />
                         </div>
-                        <div className="p-4 border-t">
-                             { (status === 'thinking' || status === 'speaking' || status === 'listening') &&
-                                <p className="text-center text-sm text-gray-500 mb-2 italic">
-                                    {status === 'listening' ? 'వింటున్నారు...' : status === 'thinking' ? 'సహాయ్ ఆలోచిస్తున్నారు...' : 'సహాయ్ మాట్లాడుతున్నారు...'}
-                                </p>
+                        <div className="p-4 border-t bg-white">
+                             { (status !== 'idle') &&
+                                <div className="flex items-center justify-center gap-2 mb-3">
+                                    <div className="flex gap-1">
+                                        <div className="w-1 h-1 bg-blue-400 rounded-full animate-bounce"></div>
+                                        <div className="w-1 h-1 bg-blue-400 rounded-full animate-bounce [animation-delay:-.3s]"></div>
+                                        <div className="w-1 h-1 bg-blue-400 rounded-full animate-bounce [animation-delay:-.5s]"></div>
+                                    </div>
+                                    <p className="text-xs text-blue-500 font-bold italic">
+                                        {status === 'listening' ? 'Listening...' : status === 'thinking' ? 'Sahay is thinking...' : 'Sahay is speaking...'}
+                                    </p>
+                                </div>
                              }
                             <form onSubmit={handleTextSubmit} className="flex items-center gap-2">
                                 <input
@@ -209,23 +216,23 @@
                                     value={inputText}
                                     onChange={(e) => setInputText(e.target.value)}
                                     placeholder="మీ సందేశాన్ని టైప్ చేయండి..."
-                                    className="flex-1 p-3 border rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    className="flex-1 p-3 text-sm bg-gray-100 border-none rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                                     disabled={status !== 'idle'}
                                 />
                                 <button
                                     type="submit"
-                                    className="bg-blue-500 text-white rounded-full w-12 h-12 flex items-center justify-center hover:bg-blue-600 disabled:bg-gray-400"
+                                    className="bg-blue-600 text-white rounded-xl w-11 h-11 flex items-center justify-center hover:bg-blue-700 disabled:bg-gray-300 transition-colors shadow-lg"
                                     disabled={status !== 'idle' || !inputText.trim()}
                                 >
-                                    <i className="fas fa-paper-plane"></i>
+                                    <i className="fas fa-paper-plane text-sm"></i>
                                 </button>
                                 <button
                                     type="button"
                                     onClick={toggleListening}
-                                    className={`${isListeningActive ? 'bg-red-500' : 'bg-green-500'} text-white rounded-full w-12 h-12 flex items-center justify-center hover:bg-opacity-90 disabled:bg-gray-400`}
+                                    className={`${isListeningActive ? 'bg-red-500 animate-pulse' : 'bg-green-500'} text-white rounded-xl w-11 h-11 flex items-center justify-center hover:opacity-90 disabled:bg-gray-300 transition-all shadow-lg`}
                                     disabled={status === 'thinking' || status === 'speaking'}
                                 >
-                                    <i className={`fas ${isListeningActive ? 'fa-stop' : 'fa-microphone'}`}></i>
+                                    <i className={`fas ${isListeningActive ? 'fa-stop' : 'fa-microphone'} text-sm`}></i>
                                 </button>
                             </form>
                         </div>
@@ -240,5 +247,4 @@
     </script>
 
 </body>
-</html>  
-
+</html>

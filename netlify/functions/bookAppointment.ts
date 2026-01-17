@@ -1,21 +1,28 @@
 import { supabase } from './lib/supabaseClient';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 
+// 1. The Permission Slip (CORS Headers)
 const headers = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Content-Type': 'application/json'
 };
 
 export const handler: Handler = async (event: HandlerEvent) => {
+    // 2. Handle the "Security Pre-Check" (OPTIONS)
     if (event.httpMethod === 'OPTIONS') {
-        return { statusCode: 200, headers, body: JSON.stringify({ message: 'CORS success' }) };
+        return { 
+            statusCode: 200, 
+            headers, 
+            body: JSON.stringify({ message: 'CORS preflight match successful' }) 
+        };
     }
 
     try {
         const { doctorName, patientName, date, time, phone } = JSON.parse(event.body || '{}');
 
-        // 1. Find the Doctor ID
+        // 3. Find the Doctor ID
         const { data: doctorData, error: doctorError } = await supabase
             .from('doctors')
             .select('id')
@@ -23,10 +30,14 @@ export const handler: Handler = async (event: HandlerEvent) => {
             .single();
 
         if (doctorError || !doctorData) {
-            return { statusCode: 404, headers, body: JSON.stringify({ success: false, message: `Doctor ${doctorName} not found.` }) };
+            return { 
+                statusCode: 404, 
+                headers, 
+                body: JSON.stringify({ success: false, message: `Doctor ${doctorName} not found.` }) 
+            };
         }
 
-        // 2. Check if the slot is already taken (Double-booking prevention)
+        // 4. Check if the slot is already taken (Double-booking prevention)
         const { data: existing } = await supabase
             .from('appointments')
             .select('id')
@@ -37,10 +48,14 @@ export const handler: Handler = async (event: HandlerEvent) => {
             .maybeSingle();
 
         if (existing) {
-            return { statusCode: 409, headers, body: JSON.stringify({ success: false, message: 'This slot was just booked. Please pick another.' }) };
+            return { 
+                statusCode: 409, 
+                headers, 
+                body: JSON.stringify({ success: false, message: 'This slot was just booked. Please pick another.' }) 
+            };
         }
 
-        // 3. Insert the appointment
+        // 5. Insert the appointment
         const { error: insertError } = await supabase
             .from('appointments')
             .insert({
@@ -54,9 +69,18 @@ export const handler: Handler = async (event: HandlerEvent) => {
 
         if (insertError) throw insertError;
 
-        return { statusCode: 200, headers, body: JSON.stringify({ success: true, message: 'Appointment booked successfully!' }) };
+        return { 
+            statusCode: 200, 
+            headers, 
+            body: JSON.stringify({ success: true, message: 'Appointment booked successfully!' }) 
+        };
 
     } catch (error: any) {
-        return { statusCode: 500, headers, body: JSON.stringify({ success: false, message: error.message }) };
+        console.error("Booking Tool Error:", error);
+        return { 
+            statusCode: 500, 
+            headers, 
+            body: JSON.stringify({ success: false, message: error.message }) 
+        };
     }
 };
