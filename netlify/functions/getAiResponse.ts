@@ -109,19 +109,29 @@ export const handler: Handler = async (event: HandlerEvent) => {
         const response = result.response;
         const functionCalls = response.functionCalls();
 
-        // 3. Handle Tool Calling
+        // 3. Handle Tool Calling (The Bridge)
         if (functionCalls && functionCalls.length > 0) {
             const call = functionCalls[0];
             
+            // --- DYNAMIC BRIDGE LOGIC ---
+            // In GitHub Codespaces, the host will be a .github.dev URL.
+            // On localhost, it will be localhost:8888.
             const host = event.headers.host || 'localhost:8888';
-            const protocol = host.includes('localhost') ? 'http' : 'https';
+            const protocol = (host.includes('localhost') || host.includes('127.0.0.1')) ? 'http' : 'https';
             const toolUrl = `${protocol}://${host}/.netlify/functions/${call.name}`;
             
+            console.log(`Brain calling tool: ${call.name} at ${toolUrl}`);
+
             const toolResponse = await fetch(toolUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(call.args),
             });
+
+            if (!toolResponse.ok) {
+                const errorText = await toolResponse.text();
+                throw new Error(`Tool ${call.name} failed: ${errorText}`);
+            }
 
             const toolResult = await toolResponse.json();
             const result2 = await chat.sendMessage([{ functionResponse: { name: call.name, response: toolResult } }]);
