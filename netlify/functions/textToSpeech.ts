@@ -1,74 +1,44 @@
-// FILE: netlify/functions/textToSpeech.ts
-import { auth } from 'google-auth-library';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 
 const headers = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Content-Type': 'application/json'
 };
 
-const handler: Handler = async (event: HandlerEvent) => {
+export const handler: Handler = async (event: HandlerEvent) => {
     if (event.httpMethod === 'OPTIONS') {
-        return { statusCode: 200, headers };
-    }
-    if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
-        return { statusCode: 500, headers, body: JSON.stringify({ error: "Google Service Account key is not configured." }) };
+        return { statusCode: 200, headers, body: JSON.stringify({ message: 'CORS success' }) };
     }
 
     try {
         const { text } = JSON.parse(event.body || '{}');
-        if (!text) {
-            return { statusCode: 400, headers, body: JSON.stringify({ error: "No text provided to synthesize." }) };
-        }
+        const apiKey = process.env.GEMINI_API_KEY;
 
-        const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY);
-        const client = auth.fromJSON(credentials);
-        client.scopes = ['https://www.googleapis.com/auth/cloud-platform'];
-        const accessToken = await client.getAccessToken();
+        if (!text) return { statusCode: 400, headers, body: JSON.stringify({ error: "No text provided" }) };
 
-        const url = `https://texttospeech.googleapis.com/v1/text:synthesize`;
-
-        const requestBody = {
-            input: { text },
-            voice: {
-                languageCode: 'te-IN',
-                // --- CHANGE IS HERE: Using a different, valid Telugu voice name ---
-                name: 'te-IN-Standard-A'
-            },
-            audioConfig: {
-                audioEncoding: 'MP3'
-            }
-        };
-
-        const ttsResponse = await fetch(url, {
+        // Calling Gemini TTS (or your specific TTS provider)
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`, {
             method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${accessToken.token}`
-            },
-            body: JSON.stringify(requestBody)
+            body: JSON.stringify({
+                contents: [{ parts: [{ text }] }],
+                generationConfig: {
+                    responseModalities: ["AUDIO"],
+                    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } } }
+                }
+            })
         });
 
-        if (!ttsResponse.ok) {
-            const errorDetails = await ttsResponse.json();
-            console.error("Google TTS API Error:", errorDetails);
-            throw new Error(`Google TTS API responded with status ${ttsResponse.status}`);
-        }
+        const result = await response.json();
+        const audioData = result.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
 
-        const ttsData = await ttsResponse.json();
-        
         return {
             statusCode: 200,
             headers,
-            body: JSON.stringify({ audioContent: ttsData.audioContent })
+            body: JSON.stringify({ audioContent: audioData })
         };
-
     } catch (error: any) {
-        console.error("FATAL: Error in textToSpeech function.", error);
-        return { statusCode: 500, headers, body: JSON.stringify({ error: `Failed to process text-to-speech request: ${error.message}` }) };
+        return { statusCode: 500, headers, body: JSON.stringify({ error: error.message }) };
     }
 };
-
-export { handler };
-
